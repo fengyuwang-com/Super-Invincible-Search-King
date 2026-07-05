@@ -1,23 +1,19 @@
-# Bing Image Finder
+# Visual Scraper
 
-绕过反爬的图片搜索工具——用 Playwright 有头浏览器搜 Bing Images，找到正确的图片并下载到本地。
+有头浏览器图片采集工具——用 Playwright 打开真实浏览器窗口，从**任意网站**提取图片。
 
 ## 解决的问题
 
-普通方式搜图（curl / requests）经常：
+普通方式搜图（curl / requests / Jina Reader）经常失败：
 - ❌ 搜到的图不对题
 - ❌ 返回空白/占位图
-- ❌ 根本搜不到
+- ❌ 因为搜索引擎图片都是 JS 动态加载的
 
-因为 Google/Bing/百度的图片都靠 **JavaScript 动态加载**，简单 HTTP 请求只拿到空壳页面。
-
-## 原理
-
-用 **Playwright 在非无头模式**（`headless=False`）下启动真实 Chrome 浏览器：
-- 浏览器指纹与真实用户无异（WebGL、navigator.webdriver、分辨率等）
-- JavaScript 完整渲染页面
-- 从 Bing 页面内部 JSON 数据（`murl`）提取原始大图 URL
-- 不会被搜索引擎拦截
+**有了 Playwright 有头浏览器：**
+- ✅ Bing / Google / 百度搜图都能用
+- ✅ 任意网站都能扒图
+- ✅ 有头模式不会被反爬识别
+- ✅ 用户能看到浏览器窗口，遇到验证码可以手动处理
 
 ## 安装
 
@@ -29,25 +25,44 @@ playwright install chromium
 ## 使用
 
 ```bash
-# 搜索关键词，弹出浏览器窗口
-python bing_image_search.py "富春山居图"
+# Bing 搜图（默认）
+python scraper.py "富春山居图 黄公望"
 
-# 搜索并下载图片
-python bing_image_search.py "山水画" --download --output ./pics
+# Google 搜图
+python scraper.py "cute cat" -e google
 
-# 控制结果数量
-python bing_image_search.py "cute cat" -n 5 --download
+# 百度搜图
+python scraper.py "山水画" -e baidu
+
+# 扒任意网页的图
+python scraper.py --url "https://example.com/gallery"
+
+# 搜索 + 下载
+python scraper.py "Mona Lisa" --download -o ./pics
+
+# 交互模式（你手动操作，我提取）
+python scraper.py --url "https://example.com" -i
 ```
 
 ## 项目结构
 
 ```
 image-finder/
-├── bing_image_search.py    # 主脚本
-├── SKILL.md                # Claude Code skill
-├── README.md               # 本文件
-└── requirements.txt        # 依赖
+├── scraper.py           # 主脚本
+├── SKILL.md             # Claude Code skill
+├── requirements.txt     # Python 依赖
+└── README.md            # 本文件
 ```
+
+## 支持的引擎
+
+| 引擎 | 参数 |
+|------|------|
+| Bing | `-e bing` (默认) |
+| Google | `-e google` |
+| 百度 | `-e baidu` |
+| 任意网页 | `--url URL` |
+| 交互模式 | `--interactive` or `-i` |
 
 ## License
 
