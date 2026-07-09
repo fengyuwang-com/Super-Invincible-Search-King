@@ -1,186 +1,149 @@
-# 🏆 Super Invincible Human-AI Collaborative Image Search King
+# 🏆 Super Invincible Search King
 
-**超级无敌人机协作AI搜图大王**
+**超级无敌人机协作万能搜索大王**
 
-> 10+ search engines · 4 free-to-use stock photography sites · Concurrent downloads · License-aware source docs · One-pass diversity dedup
+> Playwright 驱动的实体浏览器搜索器 — 搜图 · 搜文字 · 读网页。CAPTCHA 自动跳过，引擎链自动回退，真人浏览模式兜底。
 
 [![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
 [![Playwright](https://img.shields.io/badge/playwright-powered-green.svg)](https://playwright.dev/)
 [![License](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
 
-A Playwright-based relay image scraper that chains 10+ image sources, handles CAPTCHAs gracefully, downloads concurrently with license tracking, and generates provenance documents — **all in ~5 seconds**.
+三种模式，一个脚本：
+
+| 模式 | 命令 | 用途 |
+|------|------|------|
+| 🔍 **搜图** | `imgking "猫"` | 12 个图片引擎自动链，免费摄影站优先 |
+| 🔎 **搜文字** | `imgking --search "AI 2026"` | 6 个搜索引擎，标题+链接+摘要 |
+| 📖 **读网页** | `imgking --read https://...` | 打开任意网页提取正文 |
+| 🤝 **手动模式** | `imgking --url https://... --manual` | 你浏览我提取 |
 
 ```bash
-# 🔍 Free stock photos first (Unsplash → Pexels → Pixabay → Burst)
-imgking "dog" --free --download -o pics -n 10
+# 🔍 搜图 — 免费摄影站 → 通用搜索兜底
+imgking "golden retriever" --free --download -o pics
 
-# 🌐 All engines including search index fallback
-imgking "风景" --download -o pics -n 20
+# 🔎 搜文字 — 6 引擎链
+imgking --search "B站封面设计 高点击" --limit 10
 
-# 🎯 Pick your engines
-imgking "猫" -e unsplash,pixabay,baidu --download -o cat-pics
+# 📖 读网页 — 正文提取
+imgking --read "https://example.com/article"
 ```
 
 ---
 
-## ✨ Features
+## ✨ 能力
 
-| Capability | Description |
-|-----------|-------------|
-| **10+ Engines** | Unsplash, Pexels, Pixabay, Burst, Bing, Google, Baidu, Yandex, DuckDuckGo, Brave, Sogou, 360 |
-| **License-Aware** | ✅ Free-to-use sites tagged with license; ⚠️ Search engines marked as "verify before use" |
-| **Source Docs** | Every download generates `_sources_{timestamp}.json` with URL, domain, engine, and license per image |
-| **Smart Dedup** | URL dedup + title similarity filter (max 2 per similar title group) for visual diversity |
-| **Concurrent DL** | 5-thread parallel downloads — one slow URL won't block the rest |
-| **Auto-Fallback** | CAPTCHA? Blocked? Skips silently and tries the next engine |
-| **Manual Mode** | `--manual` opens browser for you to browse; press Enter and I extract |
-| **5 Second Ready** | Optimized for speed — default 5 images in ~5 seconds |
+| 能力 | 说明 |
+|------|------|
+| **搜图引擎** | Unsplash, Pexels, Pixabay, Burst, Bing, Baidu, Google, Yandex, DuckDuckGo, Brave, Sogou, 360 |
+| **文字搜索引擎** | Bing Web, Baidu Web, Google Web, DuckDuckGo Web, Brave Web, Sogou Web |
+| **读网页** | 打开任意 URL 提取正文（标题 + 正文字数 + 内容） |
+| **许可证感知** | 免费摄影站标记 ✅，通用搜索引擎标记 ⚠️ |
+| **来源文档** | `--download` 自动生成 `_sources_{timestamp}.json`，含 URL、引擎、许可证 |
+| **去重** | URL 去重 + 标题相似度过滤 |
+| **并发下载** | 5 线程并行下载 |
+| **自动回退** | CAPTCHA / 被墙 / 403 → 自动跳过换下一个引擎 |
+| **手动模式** | `--manual` 弹浏览器给你操作，按回车后提取 |
 
-## 🚀 Usage
+## 🚀 使用
 
 ```bash
-# Default chain: free sites first, search engines as fallback
+# 搜图（默认）
 imgking "golden retriever"
 
-# Free-only mode (safe to use commercially)
+# 仅免费摄影站（可商用）
 imgking "golden retriever" --free --download -o photos
 
-# All engines, 30 images
-imgking "山水" --download -o wallpapers -n 30
+# 指定引擎
+imgking "猫" -e unsplash,pixabay
 
-# Single engine
-imgking "puppy" -e unsplash --download
+# 文字搜索
+imgking --search "latest AI news 2026" -n 10
 
-# Crawl any webpage
-imgking --url "https://example.com/gallery" --download -o gallery
+# 读网页
+imgking --read "https://example.com/article"
 
-# Manual interactive mode
+# 扒任意网页图片
+imgking --url "https://example.com/gallery" --download
+
+# 手动模式
 imgking --url "https://pixiv.net" --manual
 ```
 
-## 🔧 Engines & Licensing
+## 🔧 引擎
 
-| Key | Engine | License | Region |
-|-----|--------|---------|--------|
-| `unsplash` | **Unsplash** | ✅ Free for commercial use | 🌍 |
-| `pexels` | **Pexels** | ✅ Free for commercial use | 🌍 |
-| `pixabay` | **Pixabay** | ✅ Free for commercial use | 🌍 |
-| `burst` | **Burst (Shopify)** | ✅ Free for commercial use | 🌍 |
-| `bing` | Bing Images | ⚠️ Unknown — verify rights | 🌍 |
-| `baidu` | Baidu Images | ⚠️ Unknown — verify rights | 🇨🇳 |
-| `brave` | Brave Search | ⚠️ Unknown — verify rights | 🌍 |
-| `ddg` | DuckDuckGo | ⚠️ Unknown — verify rights | 🌍 |
-| `yandex` | Yandex Images | ⚠️ Unknown — verify rights | 🇷🇺 |
-| `sogou` | Sogou Images | ⚠️ Unknown — verify rights | 🇨🇳 |
-| `so360` | 360 Images | ⚠️ Unknown — verify rights | 🇨🇳 |
-| `google` | Google Images | ⚠️ Unknown — verify rights (easily blocked) | 🌍 |
+### 图片引擎
 
-Custom engine chain:
-```bash
-imgking "猫" -e unsplash,pixabay,baidu,brave
-```
+| Key | 引擎 | 许可证 | 地区 |
+|-----|------|--------|------|
+| `unsplash` | **Unsplash** | ✅ 免费商用 | 🌍 |
+| `pexels` | **Pexels** | ✅ 免费商用 | 🌍 |
+| `pixabay` | **Pixabay** | ✅ 免费商用 | 🌍 |
+| `burst` | **Burst (Shopify)** | ✅ 免费商用 | 🌍 |
+| `bing` | Bing Images | ⚠️ 未知 | 🌍 |
+| `baidu` | 百度图片 | ⚠️ 未知 | 🇨🇳 |
+| `brave` | Brave Search | ⚠️ 未知 | 🌍 |
+| `ddg` | DuckDuckGo | ⚠️ 未知 | 🌍 |
+| `yandex` | Yandex Images | ⚠️ 未知 | 🇷🇺 |
+| `sogou` | 搜狗图片 | ⚠️ 未知 | 🇨🇳 |
+| `so360` | 360 图片 | ⚠️ 未知 | 🇨🇳 |
+| `google` | Google Images | ⚠️ 未知 (易拦截) | 🌍 |
 
-### 📄 Source Document Example
+### 文字搜索引擎
 
-```json
-{
-  "query": "golden retriever",
-  "generated_at": "2026-07-06T03:34:15+0800",
-  "engines_used": ["Unsplash", "Pexels", "Pixabay"],
-  "images": [
-    {
-      "filename": "01_golden_retriever_abc123.jpg",
-      "source_url": "https://images.unsplash.com/photo-xxx",
-      "source_domain": "images.unsplash.com",
-      "engine": "Unsplash",
-      "license": "✅ Unsplash License — free for commercial use, no attribution required"
-    }
-  ]
-}
-```
+| Key | 引擎 | URL |
+|-----|------|-----|
+| `bing-web` | Bing Web Search | `bing.com/search` |
+| `baidu-web` | 百度搜索 | `baidu.com/s` |
+| `google-web` | Google Web | `google.com/search` |
+| `ddg-web` | DuckDuckGo | `duckduckgo.com` |
+| `brave-web` | Brave Search | `search.brave.com` |
+| `sogou-web` | 搜狗搜索 | `sogou.com/web` |
 
-## ⚙️ How It Works
+## 📦 安装
 
-```
-User Input → Engine Chain → Try Engine 1 → CAPTCHA? → Skip → Try Engine 2
-                                                              ↓
-                                                        Found images?
-                                                              ↓
-                                              ┌──────────────────┐
-                                              │  URL dedup        │
-                                              │  Title diversity  │
-                                              │  (max 2 per group)│
-                                              └────────┬─────────┘
-                                                       ↓
-                                              ┌──────────────────┐
-                                              │  Parallel DL (5x) │
-                                              │  Source docs gen  │
-                                              └──────────────────┘
-```
-
-## 📦 Installation
-
-### Prerequisites
+### 前置依赖
 - Python 3.8+
-- [Playwright](https://playwright.dev/) with Chromium
+- Playwright + Chromium
 
-### 30-Second Install
-
-**Linux / macOS:**
 ```bash
-# 1. Clone and install
-git clone https://github.com/fengyuwang-com/Super-Invincible-Image-Search-King.git
-cd Super-Invincible-Image-Search-King
+# 1. 克隆
+git clone https://github.com/fengyuwang-com/Super-Invincible-Search-King.git
+cd Super-Invincible-Search-King
+
+# 2. 安装依赖
 pip install playwright
 playwright install chromium
 
-# 2. One-liner: make `imgking` available anywhere
+# 3. 配置 imgking 快捷命令（可选）
 mkdir -p ~/bin
 echo '#!/usr/bin/env bash
-exec python "$(dirname "$0")/../Super-Invincible-Image-Search-King/scraper.py" "$@"' > ~/bin/imgking
+exec python "$(dirname "$0")/../Super-Invincible-Search-King/scraper.py" "$@"' > ~/bin/imgking
 chmod +x ~/bin/imgking
 
-# 3. Done! Try it:
+# 4. 试试
 imgking "cat" --free -n 3
 ```
 
-**Windows (Git Bash):**
-```bash
-# 1. Clone and install
-git clone https://github.com/fengyuwang-com/Super-Invincible-Image-Search-King.git
-cd Super-Invincible-Image-Search-King
-pip install playwright
-playwright install chromium
+> **`~/bin` 不在 PATH 里？** 加 `export PATH="$HOME/bin:$PATH"` 到 `~/.bashrc` 或 `~/.zshrc`。
 
-# 2. Make `imgking` available anywhere
-mkdir -p ~/bin
-echo '#!/usr/bin/env bash
-exec python /c/Users/$USER/Super-Invincible-Image-Search-King/scraper.py "$@"' > ~/bin/imgking
+## ⚙️ 工作流
 
-# 3. Done! Try it:
-imgking "cat" --free -n 3
+```
+用户输入
+  ├── --read URL → 打开网页 → 提取正文 → 打印
+  ├── --search   → 文字引擎链 → 提取标题+链接+摘要 → 打印
+  └── (默认)     → 图片引擎链 → CAPTCHA? → 跳过 → 下一个
+                                     ↓
+                               搜到图片? → URL去重 → 下载 → 来源文档
 ```
 
-> 💡 **`~/bin` not in PATH?** Add `export PATH="$HOME/bin:$PATH"` to your `~/.bashrc` or `~/.zshrc`.
+## 🤝 贡献
 
-### Quick re-install (if you already have the repo)
-```bash
-git pull && pip install --upgrade playwright
-```
+PR 欢迎！方向：
+- 更多免费摄影站
+- AI 去重（CLIP embedding）
+- 结果预览 / GUI 选择器
 
-### Verify it works
-```bash
-imgking "puppy" --free --download -o my-first-pics
-ls my-first-pics/  # you should see images + _sources_*.json
-```
+## 📜 许可证
 
-## 🤝 Contributing
-
-PRs welcome! Ideas:
-- Add more free photo sites (freepik, vecteezy, etc.)
-- AI-based image dedup (CLIP embeddings)
-- GUI selector (click to pick which images to download)
-
-## 📜 License
-
-MIT — go wild.
+MIT

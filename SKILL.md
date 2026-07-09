@@ -1,13 +1,16 @@
 ---
-name: relay-scraper
+name: super-invincible-search-king
 description: >
-  MUST USE when user needs images from any website. Auto-extracts images
-  across 10+ engines including free photography sites (Unsplash/Pexels/
-  Pixabay/Burst); generates source docs with license info; skipped blocked
-  engines silently.
+  MUST USE when user needs ANY search — images, text, or webpage content.
+  Auto-extracts images across 12 engines (free photography + general search),
+  text search across 6 engines with title/link/snippet, or reads any URL's
+  body content. Playwright-driven, CAPTCHA-resistant, generator for
+  source docs with license info.
 triggers:
+  - search: 搜索/搜图/搜文字/搜网页/查资料/找资源/调研/研究/查询/情报/报告/找信息/搜集/扒/采集
   - image: 配图/图片/图/找图/搜图/照片/插图/插画/image/picture/photo/illustration
-  - fail: 搜不到/找不到/图不对/空白/没找到/没有图/扒图/采集/人机验证/captcha/被墙/403
+  - text: 文字/信息/搜索结果/文章/内容/正文/摘要/title/link/snippet/article/content
+  - fail: 搜不到/找不到/图不对/空白/没找到/没有图/扒图/采集/人机验证/captcha/被墙/403/反爬
   - action: 接力/手动/协作/交互/你浏览我提取/帮我看看/来源/版权/出处/商用
   - engine: 引擎链/fallback/自动换/换一个/换引擎/这个不行/免费/摄影/cc0/unsplash
 metadata:
@@ -15,33 +18,9 @@ metadata:
   platforms: windows
 ---
 
-# 接力爬虫 — 人机协作万能搜索器
+# 超级无敌万能搜索大王 — 人机协作全能搜索器
 
-## 核心理念
-
-```
-你(用户)         我(AI)          浏览器
- |                |               |
- |  "搜封面设计"  |               |
- | -------------  |               |
- |          --search 模式         |
- |                | Bing -> Baidu -> Google -> ...
- |                | (CAPTCHA)     |
- |                | X Bing        |
- |                | <---Baidu OK  |
- | <---10条结果-- |               |
-```
-
-**我能干的：**
-  - 🔍 **搜图** — 8个引擎自动链 -> 滚动 -> 提取 -> 下载
-  - 🔎 **搜文字** (`--search`) — 6个搜索引擎，标题+链接+摘要
-  - 📖 **读网页** (`--read URL`) — 打开任意网页提取正文
-  - 🤝 **手动模式** — 你浏览我提取
-
-**碰到验证码/拦截：** 跳过，换下一个引擎
-**所有引擎都挂了：** 弹出浏览器，交给你手动
-
-## 模式说明
+## 三种模式
 
 ### 🔍 搜图模式（默认）
 
@@ -65,6 +44,30 @@ metadata:
 
 自动提取正文，显示标题+字数+内容（前200行）。
 
+### 🤝 手动模式
+
+`python scraper.py --url "https://example.com" --manual`
+
+你浏览我提取。浏览器弹出来你自己逛，逛完按回车，AI 提取内容。
+
+## 核心理念
+
+```
+你(用户)         我(AI)          浏览器
+ |                |               |
+ |  "搜封面设计"  |               |
+ | -------------  |               |
+ |          --search 模式         |
+ |                | Bing -> Baidu -> Google -> ...
+ |                | (CAPTCHA)     |
+ |                | X Bing        |
+ |                | <---Baidu OK  |
+ | <---10条结果-- |               |
+```
+
+**碰到验证码/拦截：** 跳过，换下一个引擎
+**所有引擎都挂了：** 弹出浏览器，交给你手动
+
 ## 使用示例
 
 ```bash
@@ -80,7 +83,7 @@ python scraper.py --read "https://example.com/article"
 # 仅用免费摄影站（可以商用）
 python scraper.py "风景" --free --download -o pics
 
-# 指定图片引擎
+# 指定引擎
 python scraper.py "猫" -e unsplash
 
 # 自定义图片引擎链
@@ -96,37 +99,50 @@ python scraper.py --url "https://example.com"
 python scraper.py --url "https://pixiv.net" --manual
 ```
 
-## 版权 & 来源文档
+## 可用引擎
 
-每次 `--download` 会自动在输出目录生成 `_sources_{时间戳}.json`。
+### 图片引擎
+
+| key | 引擎 | 许可证 | 地区 |
+|-----|------|--------|------|
+| `unsplash` | **Unsplash** | ✅ 免费商用 | 全球 |
+| `pexels` | **Pexels** | ✅ 免费商用 | 全球 |
+| `pixabay` | **Pixabay** | ✅ 免费商用 | 全球 |
+| `burst` | **Burst (Shopify)** | ✅ 免费商用 | 全球 |
+| `bing` | Bing Images | ⚠️ 未知 | 全球 |
+| `baidu` | 百度图片 | ⚠️ 未知 | 中国 |
+| `yandex` | Yandex Images | ⚠️ 未知 | 俄罗斯 |
+| `ddg` | DuckDuckGo Images | ⚠️ 未知 | 全球 |
+| `brave` | Brave Image Search | ⚠️ 未知 | 全球 |
+| `sogou` | 搜狗图片 | ⚠️ 未知 | 中国 |
+| `so360` | 360图片 | ⚠️ 未知 | 中国 |
+| `google` | Google Images | ⚠️ 未知 (易拦截) | 全球 |
+
+### 文字搜索引擎
+
+| key | 引擎 | 地区 |
+|-----|------|------|
+| `bing-web` | Bing Web Search | 全球 |
+| `baidu-web` | 百度搜索 | 中国 |
+| `google-web` | Google Web | 全球 |
+| `ddg-web` | DuckDuckGo | 全球 |
+| `brave-web` | Brave Search | 全球 |
+| `sogou-web` | 搜狗搜索 | 中国 |
 
 ## 接力规则
 
 | 状况 | 我做什么 | 你做什么 |
 |------|---------|---------|
-| OK 引擎出图 | 自动提取 + 下载 | 关浏览器 |
+| OK 引擎出结果 | 自动提取 + 下载 | 关浏览器 |
 | 人机验证 | 跳过，换下一个引擎 | 等结果 |
 | 拦截/403 | 跳过，换下一个引擎 | 等结果 |
 | 7个引擎全挂 | 弹出浏览器等你手动搜 | 自己逛 -> 回车 |
 | 手动模式 (-m) | 等你浏览完按回车 | 自己逛 -> 回车 |
 | 下载失败 | 提示防盗链 | 手动打开链接 |
 
-## 可用引擎
+## 版权 & 来源文档
 
-| key | 引擎 | 许可证 | 地区 |
-|-----|------|--------|------|
-| **unsplash** | **Unsplash** | **✅ 免费商用** | 全球 |
-| **pexels** | **Pexels** | **✅ 免费商用** | 全球 |
-| **pixabay** | **Pixabay** | **✅ 免费商用** | 全球 |
-| **burst** | **Burst (Shopify)** | **✅ 免费商用** | 全球 |
-| bing | Bing Images | ⚠️ 未知 | 全球 |
-| baidu | 百度图片 | ⚠️ 未知 | 中国 |
-| yandex | Yandex Images | ⚠️ 未知 | 俄罗斯 |
-| ddg | DuckDuckGo Images | ⚠️ 未知 | 全球 |
-| brave | Brave Image Search | ⚠️ 未知 | 全球 |
-| sogou | 搜狗图片 | ⚠️ 未知 | 中国 |
-| so360 | 360图片 | ⚠️ 未知 | 中国 |
-| google | Google Images | ⚠️ 未知 (易拦截) | 全球 |
+每次 `--download` 会自动在输出目录生成 `_sources_{时间戳}.json`。
 
 ## 安装
 
