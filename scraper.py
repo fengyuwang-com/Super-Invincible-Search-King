@@ -1,45 +1,35 @@
 #!/usr/bin/env python3
 """
-接力爬虫 — 人机协作的网页图片采集器
-====================================
+接力爬虫 — 人机协作的万能搜索器
+================================
 
-核心模式：自动 → 卡住 → 交给你 → 继续
+核心能力：用真实浏览器绕过反爬，搜图 + 搜文字 + 读网页
 
 我能干的：
-  - 打开浏览器搜图（Bing/百度/Yandex/DuckDuckGo/Brave/搜狗/360/Google/任意网页）
-  - 自动引擎链：一个不行换下一个，直到出图
-  - 等待页面加载，滚动触发懒加载
-  - 自动提取图片 URL
-  - 下载到本地
-
-我搞不定交给你的：
-  - 🤖 人机验证（CAPTCHA）→ 跳过，换下一个引擎试
-  - 🕳️ 所有引擎都搜不到图 → 弹出浏览器，你手动搜
-  - 🔒 403 下载失败 → 你手动打开图片页，我重新取链接
-  - 🖱️ 你想自己浏览 → 交互模式，你边看我边取
+  🔍 搜图    — 10+ 引擎链，自动跳过验证码，免费摄影站优先
+  🔎 搜文字  — 6 个搜索引擎，提取标题+链接+摘要
+  📖 读网页  — 打开任意 URL 提取正文
+  🤝 手动模式 — 你浏览我提取
 
 使用示例：
 
-    # 全自动：Bing → 百度 → Yandex → ... 挨个试
-    python scraper.py "富春山居图"
+    # 搜图（默认）
+    python scraper.py "猫"
 
-    # 搜 + 下载
-    python scraper.py "Michael Jackson" --download
+    # 搜文字
+    python scraper.py --search "B站封面设计技巧"
 
-    # 扒任意网页
+    # 读网页
+    python scraper.py --read "https://example.com/article"
+
+    # 扒任意网页的图
     python scraper.py --url "https://example.com/gallery"
 
-    # 指定搜索引擎
-    python scraper.py "猫" --engine baidu
-
-    # 自定义引擎链
-    python scraper.py "乔丹" -e bing,baidu
-
-    # 纯手动：你浏览我提取（循环接力）
+    # 手动模式
     python scraper.py --url "https://example.com" --manual
 
-    # 指定下载目录和图片数量
-    python scraper.py "风景" -n 30 --download -o ./wallpapers
+    # 搜图 + 下载
+    python scraper.py "狗" --download -o pics
 """
 
 import asyncio, json, os, sys, argparse, urllib.request, urllib.parse, re, time, hashlib, concurrent.futures
@@ -223,6 +213,130 @@ ENGINES = {
 FALLBACK_CHAIN = ["unsplash", "pexels", "pixabay", "burst", "bing", "baidu", "brave", "ddg", "sogou", "so360"]
 FREE_SITE_KEYS = ["unsplash", "pexels", "pixabay", "burst"]
 
+# ============================================================
+# 文字搜索引擎配置（--search 模式）
+# ============================================================
+
+TEXT_ENGINES = {
+    "bing-web": {
+        "name": "Bing Web",
+        "url": "https://www.bing.com/search?q={q}&form=QBLH",
+        "extract": """
+            (() => {
+                const r = [];
+                document.querySelectorAll('#b_results .b_algo').forEach(el => {
+                    const link = el.querySelector('h2 a');
+                    const snippet = el.querySelector('.b_caption p, .b_lineclamp2');
+                    if (link) r.push({
+                        title: (link.innerText || '').trim(),
+                        url: link.href || '',
+                        snippet: snippet ? (snippet.innerText || '').trim() : ''
+                    });
+                });
+                return r;
+            })()
+        """,
+    },
+    "baidu-web": {
+        "name": "百度搜索",
+        "url": "https://www.baidu.com/s?wd={q}",
+        "extract": """
+            (() => {
+                const r = [];
+                document.querySelectorAll('#content_left .result, #content_left .result-op').forEach(el => {
+                    const link = el.querySelector('h3 a');
+                    const snippet = el.querySelector('.c-abstract, .c-span-last, .content-right_8Zs40');
+                    if (link) r.push({
+                        title: (link.innerText || '').trim(),
+                        url: link.href || '',
+                        snippet: snippet ? (snippet.innerText || '').trim() : ''
+                    });
+                });
+                return r;
+            })()
+        """,
+    },
+    "google-web": {
+        "name": "Google Web",
+        "url": "https://www.google.com/search?q={q}&hl=zh-CN",
+        "extract": """
+            (() => {
+                const r = [];
+                document.querySelectorAll('div.g, div[data-hveid]').forEach(el => {
+                    const link = el.querySelector('a[href^="http"]');
+                    const snippet = el.querySelector('.VwiC3b, .lEBKkf, span.aCOpRe');
+                    if (link && link.href && !link.href.includes('google.com')) r.push({
+                        title: (link.innerText || '').trim(),
+                        url: link.href,
+                        snippet: snippet ? (snippet.innerText || '').trim() : ''
+                    });
+                });
+                return r;
+            })()
+        """,
+    },
+    "ddg-web": {
+        "name": "DuckDuckGo",
+        "url": "https://duckduckgo.com/?q={q}&ia=web",
+        "extract": """
+            (() => {
+                const r = [];
+                document.querySelectorAll('article[data-testid="result"]').forEach(el => {
+                    const link = el.querySelector('a[data-testid="result-title-a"]');
+                    const snippet = el.querySelector('[data-testid="result-snippet"]');
+                    if (link) r.push({
+                        title: (link.innerText || '').trim(),
+                        url: link.href || '',
+                        snippet: snippet ? (snippet.innerText || '').trim() : ''
+                    });
+                });
+                return r;
+            })()
+        """,
+    },
+    "brave-web": {
+        "name": "Brave Search",
+        "url": "https://search.brave.com/search?q={q}",
+        "extract": """
+            (() => {
+                const r = [];
+                document.querySelectorAll('.snippet, [data-type="web"]').forEach(el => {
+                    const link = el.querySelector('a[href]');
+                    const snippet = el.querySelector('.snippet-description, .description');
+                    if (link && link.href && !link.href.startsWith('javascript:')) r.push({
+                        title: (link.innerText || '').trim(),
+                        url: link.href,
+                        snippet: snippet ? (snippet.innerText || '').trim() : ''
+                    });
+                });
+                return r;
+            })()
+        """,
+    },
+    "sogou-web": {
+        "name": "搜狗搜索",
+        "url": "https://www.sogou.com/web?query={q}",
+        "extract": """
+            (() => {
+                const r = [];
+                document.querySelectorAll('.vrwrap, .result').forEach(el => {
+                    const link = el.querySelector('h3 a, .vr-title a');
+                    const snippet = el.querySelector('.str-text, .star-wiki, .text-l');
+                    if (link) r.push({
+                        title: (link.innerText || '').trim(),
+                        url: link.href || '',
+                        snippet: snippet ? (snippet.innerText || '').trim() : ''
+                    });
+                });
+                return r;
+            })()
+        """,
+    },
+}
+
+# 默认文字搜索链
+TEXT_FALLBACK_CHAIN = ["bing-web", "baidu-web", "google-web", "ddg-web", "brave-web", "sogou-web"]
+
 
 def detect_captcha(text):
     """检测页面是否被人机验证挡住"""
@@ -387,7 +501,7 @@ def write_source_doc(images, dl_results, output_dir, query, engines_used):
 
 
 async def try_engine(page, eng, query, min_size, max_count):
-    """尝试一个搜索引擎。成功返回带标记的图片列表，失败返回 None。"""
+    """尝试一个图片搜索引擎。成功返回带标记的图片列表，失败返回 None。"""
     info = ENGINES[eng]
     page_url = info["url"].format(q=urllib.parse.quote(query))
     print(f"\n🔵 [{info['name']}] {query}", flush=True)
@@ -431,18 +545,181 @@ async def try_engine(page, eng, query, min_size, max_count):
     return images
 
 
+async def try_text_engine(page, eng, query, max_count):
+    """尝试一个文字搜索引擎。成功返回 [{title, url, snippet}]，失败返回 None。"""
+    info = TEXT_ENGINES[eng]
+    page_url = info["url"].format(q=urllib.parse.quote(query))
+    print(f"\n🔵 [{info['name']}] {query}", flush=True)
+
+    try:
+        await page.goto(page_url, timeout=60000, wait_until="domcontentloaded")
+    except Exception as e:
+        print(f"   ⚠️ 导航失败: {str(e)[:50]}", flush=True)
+        return None
+
+    await page.wait_for_timeout(3000)
+
+    # 检测验证码/拦截
+    page_text = await page.inner_text("body") if await page.query_selector("body") else ""
+    if detect_captcha(page_text):
+        print(f"   🤖 CAPTCHA，跳过", flush=True)
+        return None
+    if detect_blocked(page_text):
+        print(f"   🚫 被拦截，跳过", flush=True)
+        return None
+
+    # 引擎专用提取
+    results = await page.evaluate(info["extract"])
+
+    # 没出结果？走通用兜底
+    if not results:
+        print("   ⚠️ 引擎提取没拿到，尝试通用方法...", flush=True)
+        results = await extract_search_results(page, max_count)
+
+    return (results or [])[:max_count]
+
+
+async def extract_search_results(page, max_count=20):
+    """通用兜底：提取当前页面中看起来像搜索结果的条目"""
+    results = await page.evaluate(f"""() => {{
+        const r = [];
+        // 所有链接
+        document.querySelectorAll('a[href]').forEach(a => {{
+            const href = a.href;
+            const text = (a.innerText || '').trim();
+            if (text.length > 8 && href.startsWith('http') && !href.includes(window.location.host)) {{
+                // 找父容器里的摘要
+                const parent = a.closest('li, div, section, article');
+                const snippet = parent ? (parent.innerText || '').replace(text, '').trim().slice(0, 200) : '';
+                r.push({{ title: text.slice(0, 120), url: href, snippet: snippet.slice(0, 200) }});
+            }}
+        }});
+        return r.slice(0, {max_count});
+    }}""")
+    return results
+
+
+async def extract_page_content(page):
+    """提取当前页面的正文内容"""
+    content = await page.evaluate("""() => {
+        // 优先语义标签
+        const selectors = [
+            'article',
+            '[role="main"]',
+            'main',
+            '.post-content',
+            '.article-content',
+            '.entry-content',
+            '#content',
+            '.content',
+            '.post',
+            '.article',
+            '#read-content',
+            '.markdown-body',
+        ];
+        for (const sel of selectors) {
+            const el = document.querySelector(sel);
+            if (el && el.innerText.trim().length > 200) return el.innerText.trim();
+        }
+        // 兜底：body 文本
+        if (document.body) {
+            const text = document.body.innerText || '';
+            return text.trim().slice(0, 50000);
+        }
+        return '';
+    }""")
+    return content
+
+
 async def run(query=None, engines=None, url=None, max_count=5,
-              download=False, output_dir=".", manual=False, min_size=100, free_only=False):
-    """主循环：引擎链 → 自动试 → 全挂 → 交给你"""
+              download=False, output_dir=".", manual=False, min_size=100, free_only=False,
+              search=False, read_url=None):
+    """主循环：搜图 / 搜文字 / 读网页"""
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False)
         page = await browser.new_page()
         await page.set_viewport_size({"width": 1400, "height": 900})
 
-        images = []
+        # ----- 读网页模式（--read）-----
+        if read_url:
+            print(f"\n📖 [读网页] {read_url}", flush=True)
+            try:
+                await page.goto(read_url, timeout=60000, wait_until="domcontentloaded")
+            except Exception as e:
+                print(f"   ❌ 打开失败: {str(e)[:80]}", flush=True)
+                await browser.close()
+                return
 
-        # ----- URL模式：打开指定网页 -----
+            await page.wait_for_timeout(3000)
+
+            if manual:
+                return await manual_mode(page, browser, min_size, max_count)
+
+            content = await extract_page_content(page)
+            if content:
+                lines = content.split('\n')
+                title = await page.title()
+                print(f"\n📄 标题: {title}", flush=True)
+                print(f"📏 字数: {len(content)}", flush=True)
+                print(f"{'='*60}", flush=True)
+                for line in lines[:200]:
+                    print(line, flush=True)
+                if len(lines) > 200:
+                    print(f"\n... (共 {len(lines)} 行，仅显示前 200 行)", flush=True)
+            else:
+                print("   ⚠️ 未能提取到正文内容", flush=True)
+
+            await browser.close()
+            return
+
+        # ----- 文字搜索模式（--search）-----
+        if search:
+            if not query:
+                print("❌ 文字搜索需要提供 query", flush=True)
+                await browser.close()
+                return
+
+            text_engines = engines if engines else TEXT_FALLBACK_CHAIN
+            text_engines = [e for e in text_engines if e in TEXT_ENGINES]
+            if not text_engines:
+                print(f"❌ 无效文字引擎: {engines}，可用: {', '.join(TEXT_ENGINES.keys())}", flush=True)
+                await browser.close()
+                return
+
+            all_results = []
+            for eng in text_engines:
+                result = await try_text_engine(page, eng, query, max_count)
+                if result:
+                    all_results.extend(result)
+                    print(f"\n✅ [{TEXT_ENGINES[eng]['name']}] {len(result)} 条结果", flush=True)
+                else:
+                    print(f"   ❌ [{TEXT_ENGINES[eng]['name']}] 无结果", flush=True)
+
+            # 去重
+            seen = set()
+            deduped = []
+            for r in all_results:
+                if r.get("url") and r["url"] not in seen:
+                    seen.add(r["url"])
+                    deduped.append(r)
+
+            # 展示
+            print(f"\n{'='*60}", flush=True)
+            print(f"📎 共 {len(deduped)} 条结果", flush=True)
+            print(f"{'='*60}", flush=True)
+            for i, r in enumerate(deduped[:max_count], 1):
+                print(f"\n[{i}] {r.get('title', '')}", flush=True)
+                print(f"    🔗 {r.get('url', '')}", flush=True)
+                if r.get('snippet'):
+                    print(f"    💬 {r['snippet'][:150]}", flush=True)
+
+            await browser.close()
+            return
+
+        # ----- 图片搜索模式（默认）-----
+        # [原有逻辑保持不变]
+        images = []
         if url:
             print(f"\n🔵 [导航] 打开网页: {url}", flush=True)
             await page.goto(url, timeout=60000, wait_until="domcontentloaded")
@@ -555,29 +832,53 @@ async def manual_mode(page, browser, min_size=100, max_count=50):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="接力爬虫 — 人机协作图片采集",
+        description="接力爬虫 — 人机协作万能搜索器（搜图 / 搜文字 / 读网页）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("query", nargs="?", help="搜索关键词")
-    parser.add_argument("--engine", "-e", default=",".join(FALLBACK_CHAIN),
-                        help=f"搜索引擎或链（逗号分隔），默认: {','.join(FALLBACK_CHAIN)}")
+    parser.add_argument("--engine", "-e", default="",
+                        help=f"图片搜索引擎链（逗号分隔），默认: {','.join(FALLBACK_CHAIN)}")
     parser.add_argument("--url", "-u", help="目标网页 URL")
+    parser.add_argument("--search", action="store_true",
+                        help="文字搜索模式（默认是搜图）")
+    parser.add_argument("--read", metavar="URL",
+                        help="读网页模式：打开 URL 提取正文")
     parser.add_argument("--free", action="store_true",
                         help=f"仅用免费摄影站: {', '.join(FREE_SITE_KEYS)}")
     parser.add_argument("--download", "-d", action="store_true", help="下载图片")
     parser.add_argument("--output", "-o", default=".", help="下载目录")
-    parser.add_argument("--limit", "-n", type=int, default=5, help="最大图片数")
-    parser.add_argument("--min-size", type=int, default=100, help="最小图片宽度")
+    parser.add_argument("--limit", "-n", type=int, default=5, help="最大结果数")
+    parser.add_argument("--min-size", type=int, default=100, help="最小图片宽度（仅搜图模式）")
     parser.add_argument("--manual", "-m", action="store_true",
                         help="手动模式：你浏览我提取")
     args = parser.parse_args()
 
+    # 读网页模式
+    if args.read:
+        asyncio.run(run(
+            read_url=args.read, max_count=args.limit, manual=args.manual,
+        ))
+        sys.exit(0)
+
+    # 文字搜索模式
+    if args.search:
+        if not args.query:
+            print("❌ 文字搜索需要提供关键词", flush=True)
+            sys.exit(1)
+        text_engines = [e.strip() for e in args.engine.split(",") if e.strip()] if args.engine else TEXT_FALLBACK_CHAIN
+        asyncio.run(run(
+            query=args.query, engines=text_engines, max_count=args.limit,
+            search=True,
+        ))
+        sys.exit(0)
+
+    # 图片搜索模式（原有逻辑）
     if not args.query and not args.url:
         parser.print_help()
         sys.exit(1)
 
     # 解析引擎链
-    engine_ids = [e.strip() for e in args.engine.split(",") if e.strip()]
+    engine_ids = [e.strip() for e in args.engine.split(",") if e.strip()] if args.engine else FALLBACK_CHAIN.copy()
 
     # --free 模式：只用免费摄影站
     if args.free:

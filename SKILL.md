@@ -15,64 +15,90 @@ metadata:
   platforms: windows
 ---
 
-# 接力爬虫 — 人机协作图片采集
+# 接力爬虫 — 人机协作万能搜索器
 
 ## 核心理念
 
 ```
 你(用户)         我(AI)          浏览器
  |                |               |
- |  "搜猫图"      |               |
+ |  "搜封面设计"  |               |
  | -------------  |               |
- |                | Bing -> Baidu -> Yandex -> ...
+ |          --search 模式         |
+ |                | Bing -> Baidu -> Google -> ...
  |                | (CAPTCHA)     |
  |                | X Bing        |
- |                | X Baidu       |
- |                | <---Yandex OK |
- | <---15张图---  |               |
+ |                | <---Baidu OK  |
+ | <---10条结果-- |               |
 ```
 
-**我能干的：** 8个引擎自动链 -> 滚动 -> 提取 -> 下载
+**我能干的：**
+  - 🔍 **搜图** — 8个引擎自动链 -> 滚动 -> 提取 -> 下载
+  - 🔎 **搜文字** (`--search`) — 6个搜索引擎，标题+链接+摘要
+  - 📖 **读网页** (`--read URL`) — 打开任意网页提取正文
+  - 🤝 **手动模式** — 你浏览我提取
+
 **碰到验证码/拦截：** 跳过，换下一个引擎
 **所有引擎都挂了：** 弹出浏览器，交给你手动
 
-## 引擎链 (默认顺序)
+## 模式说明
 
-`unsplash -> pexels -> pixabay -> burst -> bing -> baidu -> brave -> ddg -> sogou -> so360`
+### 🔍 搜图模式（默认）
 
-免费摄影站优先（可商用），通用搜索引擎兜底（版权未知）。
+`python scraper.py "关键词" [选项]`
 
-遇到CAPTCHA/拦截自动跳过，直到有引擎出图为止。
+自动链：`unsplash -> pexels -> pixabay -> burst -> bing -> baidu -> brave -> ddg -> sogou -> so360`
 
-## 使用
+免费摄影站优先（可商用），通用搜索兜底（版权未知）。
+
+### 🔎 文字搜索模式
+
+`python scraper.py --search "关键词" [选项]`
+
+自动链：`bing-web -> baidu-web -> google-web -> ddg-web -> brave-web -> sogou-web`
+
+输出每条结果的标题、链接、摘要片段。
+
+### 📖 读网页模式
+
+`python scraper.py --read "https://example.com/article"`
+
+自动提取正文，显示标题+字数+内容（前200行）。
+
+## 使用示例
 
 ```bash
-# 默认引擎链（免费站优先，搜索兜底）
-python scraper.py "狗"
+# 搜图（默认）
+python scraper.py "猫"
 
-# 仅用免费摄影站（Unsplash/Pexels/Pixabay/Burst）
-python scraper.py "狗" --free --download -o pics
+# 文字搜索
+python scraper.py --search "B站封面设计技巧 高点击"
 
-# 指定引擎
+# 读网页
+python scraper.py --read "https://example.com/article"
+
+# 仅用免费摄影站（可以商用）
+python scraper.py "风景" --free --download -o pics
+
+# 指定图片引擎
 python scraper.py "猫" -e unsplash
 
-# 自定义链
-python scraper.py "风景" -e unsplash,pixabay,pexels
+# 自定义图片引擎链
+python scraper.py "乔丹" -e bing,baidu
 
-# 搜 + 下载 + 生成来源文档
+# 搜图 + 下载 + 来源文档
 python scraper.py "狗" -e unsplash,pixabay --download -o pics -n 20
-# 每次下载自动生成 _sources_{时间戳}.json
 
-# 扒任意网页
+# 扒任意网页的图
 python scraper.py --url "https://example.com"
 
-# 手动模式：你浏览我提取（循环接力）
+# 手动模式：你浏览我提取
 python scraper.py --url "https://pixiv.net" --manual
 ```
 
 ## 版权 & 来源文档
 
-每次 `--download` 会自动在输出目录生成 `_sources_{时间戳}.json`：
+每次 `--download` 会自动在输出目录生成 `_sources_{时间戳}.json`。
 
 ## 接力规则
 
