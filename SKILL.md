@@ -4,8 +4,7 @@ description: >
   MUST USE when user needs ANY search — images, text, or webpage content.
   Auto-extracts images across 12 engines (free photography + general search),
   text search across 6 engines with title/link/snippet, or reads any URL's
-  body content. Playwright-driven, CAPTCHA-resistant, generator for
-  source docs with license info.
+  body content. Playwright-driven, CAPTCHA-resistant with human-in-the-loop fallback.
 triggers:
   - search: 搜索/搜图/搜文字/搜网页/查资料/找资源/调研/研究/查询/情报/报告/找信息/搜集/扒/采集
   - image: 配图/图片/图/找图/搜图/照片/插图/插画/image/picture/photo/illustration
@@ -19,6 +18,8 @@ metadata:
 ---
 
 # 超级无敌万能搜索大王 — 人机协作全能搜索器
+
+位置：`C:\FengProj\Search-King\scraper.py`
 
 ## 三种模式
 
@@ -36,13 +37,23 @@ metadata:
 
 自动链：`bing-web -> baidu-web -> google-web -> ddg-web -> brave-web -> sogou-web`
 
-输出每条结果的标题、链接、摘要片段。
+**全挂了 → 自动切手动模式**：浏览器保持打开，你自己搜，搜完按 Enter 我提取结果。
 
 ### 📖 读网页模式
 
 `python scraper.py --read "https://example.com/article"`
 
 自动提取正文，显示标题+字数+内容（前200行）。
+
+**遇到验证码 → 自动切手动模式**：浏览器保持打开，你处理完验证码后按 Enter，我提取内容。
+
+### 🌐 浏览器选择
+
+`--browser edge`（默认）用你系统安装的 Edge，隐身效果更好
+`--browser chromium` 用 Playwright 自带的 Chromium
+
+Edge 对百度/搜狗/DuckDuckGo 直接出结果（Google/Brave 仍可能触发验证码）。
+Chromium 是备选，某些时候效果反而更好。
 
 ### 🤝 手动模式
 
@@ -52,101 +63,31 @@ metadata:
 
 ## 核心理念
 
-```
-你(用户)         我(AI)          浏览器
- |                |               |
- |  "搜封面设计"  |               |
- | -------------  |               |
- |          --search 模式         |
- |                | Bing -> Baidu -> Google -> ...
- |                | (CAPTCHA)     |
- |                | X Bing        |
- |                | <---Baidu OK  |
- | <---10条结果-- |               |
-```
-
-**碰到验证码/拦截：** 跳过，换下一个引擎
-**所有引擎都挂了：** 弹出浏览器，交给你手动
+人机协作：自动引擎能搞定就自动搞定，搞不定就交给你手动，你搞定了我帮你提取。
 
 ## 使用示例
 
 ```bash
-# 搜图（默认）
-python scraper.py "猫"
+# 搜文字（全引擎链自动，全挂了切手动）
+python C:\FengProj\Search-King\scraper.py --search "中概股 KWEB 2026"
 
-# 文字搜索
-python scraper.py --search "B站封面设计技巧 高点击"
+# 读网页（遇到验证码自动切手动）
+python C:\FengProj\Search-King\scraper.py --read "https://zhuanlan.zhihu.com/p/123"
 
-# 读网页
-python scraper.py --read "https://example.com/article"
+# 搜图 + 下载
+python C:\FengProj\Search-King\scraper.py "风景" --download -o pics
 
-# 仅用免费摄影站（可以商用）
-python scraper.py "风景" --free --download -o pics
-
-# 指定引擎
-python scraper.py "猫" -e unsplash
-
-# 自定义图片引擎链
-python scraper.py "乔丹" -e bing,baidu
-
-# 搜图 + 下载 + 来源文档
-python scraper.py "狗" -e unsplash,pixabay --download -o pics -n 20
-
-# 扒任意网页的图
-python scraper.py --url "https://example.com"
-
-# 手动模式：你浏览我提取
-python scraper.py --url "https://pixiv.net" --manual
+# 手动模式
+python C:\FengProj\Search-King\scraper.py --url "https://example.com" --manual
 ```
-
-## 可用引擎
-
-### 图片引擎
-
-| key | 引擎 | 许可证 | 地区 |
-|-----|------|--------|------|
-| `unsplash` | **Unsplash** | ✅ 免费商用 | 全球 |
-| `pexels` | **Pexels** | ✅ 免费商用 | 全球 |
-| `pixabay` | **Pixabay** | ✅ 免费商用 | 全球 |
-| `burst` | **Burst (Shopify)** | ✅ 免费商用 | 全球 |
-| `bing` | Bing Images | ⚠️ 未知 | 全球 |
-| `baidu` | 百度图片 | ⚠️ 未知 | 中国 |
-| `yandex` | Yandex Images | ⚠️ 未知 | 俄罗斯 |
-| `ddg` | DuckDuckGo Images | ⚠️ 未知 | 全球 |
-| `brave` | Brave Image Search | ⚠️ 未知 | 全球 |
-| `sogou` | 搜狗图片 | ⚠️ 未知 | 中国 |
-| `so360` | 360图片 | ⚠️ 未知 | 中国 |
-| `google` | Google Images | ⚠️ 未知 (易拦截) | 全球 |
-
-### 文字搜索引擎
-
-| key | 引擎 | 地区 |
-|-----|------|------|
-| `bing-web` | Bing Web Search | 全球 |
-| `baidu-web` | 百度搜索 | 中国 |
-| `google-web` | Google Web | 全球 |
-| `ddg-web` | DuckDuckGo | 全球 |
-| `brave-web` | Brave Search | 全球 |
-| `sogou-web` | 搜狗搜索 | 中国 |
 
 ## 接力规则
 
 | 状况 | 我做什么 | 你做什么 |
 |------|---------|---------|
-| OK 引擎出结果 | 自动提取 + 下载 | 关浏览器 |
-| 人机验证 | 跳过，换下一个引擎 | 等结果 |
-| 拦截/403 | 跳过，换下一个引擎 | 等结果 |
-| 7个引擎全挂 | 弹出浏览器等你手动搜 | 自己逛 -> 回车 |
+| OK 引擎出结果 | 自动提取 | 等结果 |
+| 人机验证/拦截 | 跳过，换下一个引擎 | 等结果 |
+| **所有引擎全挂** | **切手动模式，浏览器保持打开** | **自己搜 → 按 Enter 我提取** |
+| **读网页遇验证码** | **切手动模式，等你处理** | **处理验证码 → 按 Enter 我提取** |
 | 手动模式 (-m) | 等你浏览完按回车 | 自己逛 -> 回车 |
 | 下载失败 | 提示防盗链 | 手动打开链接 |
-
-## 版权 & 来源文档
-
-每次 `--download` 会自动在输出目录生成 `_sources_{时间戳}.json`。
-
-## 安装
-
-```bash
-pip install playwright
-playwright install chromium
-```

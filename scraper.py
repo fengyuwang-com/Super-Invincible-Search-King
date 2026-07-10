@@ -633,13 +633,50 @@ async def extract_page_content(page):
 
 async def run(query=None, engines=None, url=None, max_count=5,
               download=False, output_dir=".", manual=False, min_size=100, free_only=False,
-              search=False, read_url=None):
+              search=False, read_url=None, browser_choice="edge"):
     """主循环：搜图 / 搜文字 / 读网页"""
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False)
-        page = await browser.new_page()
-        await page.set_viewport_size({"width": 1400, "height": 900})
+        # 浏览器选择：edge（真 Edge）vs chromium（Playwright 自带）
+        launch_kwargs = dict(
+            headless=False,
+            args=[
+                '--disable-blink-features=AutomationControlled',
+                '--disable-automation',
+                '--no-sandbox',
+                '--disable-web-security',
+                '--disable-features=IsolateOrigins,site-per-process',
+                '--disable-setuid-sandbox',
+            ]
+        )
+        if browser_choice == "edge":
+            launch_kwargs["channel"] = "msedge"
+            print("🌐 浏览器: Edge（系统安装）", flush=True)
+        else:
+            print("🌐 浏览器: Chromium（Playwright 自带）", flush=True)
+        browser = await p.chromium.launch(**launch_kwargs)
+        context = await browser.new_context(
+            viewport={"width": 1400, "height": 900},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+            locale="zh-CN",
+            timezone_id="Asia/Shanghai",
+            permissions=["geolocation"],
+            geolocation={"longitude": 121.4737, "latitude": 31.2304},
+        )
+        # 隐藏自动化痕迹
+        await context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', { get: () => false });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
+            Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] });
+            // 覆盖 Chrome 自动化检测
+            window.chrome = { runtime: {} };
+            // 覆盖权限查询
+            const originalQuery = window.navigator.permissions.query;
+            window.navigator.permissions.query = (p) => (
+                p.name === 'notifications' ? Promise.resolve({state: 'prompt'}) : originalQuery(p)
+            );
+        """)
+        page = await context.new_page()
 
         # ----- 读网页模式（--read）-----
         if read_url:
@@ -655,6 +692,22 @@ async def run(query=None, engines=None, url=None, max_count=5,
 
             if manual:
                 return await manual_mode(page, browser, min_size, max_count)
+
+            # 检测验证码/拦截 → 自动切手动模式（循环：你浏览→我提取→你再浏览）
+            page_text = await page.inner_text("body") if await page.query_selector("body") else ""
+            if detect_captcha(page_text) or detect_blocked(page_text):
+                print("\n🟡 遇到验证码/拦截，自动切换手动模式", flush=True)
+                print("   浏览器保持打开，你处理验证码/手动浏览到目标内容", flush=True)
+                print("   每次按 Enter 我提取当前页，输入 'done' 退出", flush=True)
+                while True:
+                    ok = await wait_for_user_input(page, "处理完按 Enter 提取内容")
+                    if not ok:
+                        await browser.close()
+                        return
+                    content = await extract_page_content(page)
+                    if content and len(content) > 100:
+                        break
+                    print("   ⚠️ 内容太短（可能是验证码页面），继续等你处理", flush=True)
 
             content = await extract_page_content(page)
             if content:
@@ -696,6 +749,15 @@ async def run(query=None, engines=None, url=None, max_count=5,
                 else:
                     print(f"   ❌ [{TEXT_ENGINES[eng]['name']}] 无结果", flush=True)
 
+            # 所有引擎全挂了 → 手动模式兜底
+            if not all_results:
+                print(f"\n🟡 全部 {len(text_engines)} 个搜索引擎都挂了（验证码/拦截/无结果）", flush=True)
+                manual_results = await manual_text_extract(page, browser, max_count)
+                all_results = manual_results or []
+            else:
+                # 如果自动引擎出了部分结果，问问要不要手动补充
+                print(f"\n💡 提示: 想手动补充搜索？用 --manual 再跑一次", flush=True)
+
             # 去重
             seen = set()
             deduped = []
@@ -705,14 +767,19 @@ async def run(query=None, engines=None, url=None, max_count=5,
                     deduped.append(r)
 
             # 展示
-            print(f"\n{'='*60}", flush=True)
-            print(f"📎 共 {len(deduped)} 条结果", flush=True)
-            print(f"{'='*60}", flush=True)
-            for i, r in enumerate(deduped[:max_count], 1):
-                print(f"\n[{i}] {r.get('title', '')}", flush=True)
-                print(f"    🔗 {r.get('url', '')}", flush=True)
-                if r.get('snippet'):
-                    print(f"    💬 {r['snippet'][:150]}", flush=True)
+            if deduped:
+                print(f"\n{'='*60}", flush=True)
+                print(f"📎 共 {len(deduped)} 条结果", flush=True)
+                print(f"{'='*60}", flush=True)
+                for i, r in enumerate(deduped[:max_count], 1):
+                    print(f"\n[{i}] {r.get('title', '')}", flush=True)
+                    print(f"    🔗 {r.get('url', '')}", flush=True)
+                    if r.get('snippet'):
+                        print(f"    💬 {r['snippet'][:150]}", flush=True)
+            else:
+                print(f"\n{'='*60}", flush=True)
+                print("❌ 所有引擎都挂了，也没提取到手动搜索结果", flush=True)
+                print(f"{'='*60}", flush=True)
 
             await browser.close()
             return
@@ -830,6 +897,60 @@ async def manual_mode(page, browser, min_size=100, max_count=50):
     return []
 
 
+async def manual_text_extract(page, browser, max_count=20):
+    """手动文字搜索：自动引擎全部挂掉后的兜底。浏览器保持打开，用户自己搜，AI提取结果。"""
+    print("\n🟡 [手动文字搜索] 所有搜索引擎都挂了，交给你了", flush=True)
+    print("   ┌─────────────────────────────────────────────┐", flush=True)
+    print("   │ 1. 浏览器里已经打开了页面                    │", flush=True)
+    print("   │ 2. 你自己搜/翻页/处理验证码                  │", flush=True)
+    print("   │ 3. 搜到结果后按 Enter，我提取标题+链接+摘要  │", flush=True)
+    print("   │ 4. 输入 'done' 退出                          │", flush=True)
+    print("   └─────────────────────────────────────────────┘", flush=True)
+    all_results = []
+    seen_urls = set()
+    while True:
+        ok = await wait_for_user_input(page, "准备好了？按 Enter 提取，输入 'done' 退出")
+        if not ok:
+            break
+        # 先试通用提取
+        results = await extract_search_results(page, max_count)
+        if not results:
+            # 再逐引擎专用提取逻辑
+            for eng_key in TEXT_ENGINES:
+                info = TEXT_ENGINES[eng_key]
+                try:
+                    results = await page.evaluate(info["extract"])
+                    if results:
+                        break
+                except:
+                    continue
+
+        if results:
+            # 去重
+            new_count = 0
+            for r in results:
+                url = r.get("url", "")
+                if url and url not in seen_urls:
+                    seen_urls.add(url)
+                    all_results.append(r)
+                    new_count += 1
+            print(f"\n✅ 提取到 {len(results)} 条（新增 {new_count} 条，累计 {len(all_results)} 条）", flush=True)
+            for i, r in enumerate(results[:max_count], 1):
+                print(f"\n[{i}] {r.get('title', '')[:80]}", flush=True)
+                print(f"    🔗 {r.get('url', '')[:120]}", flush=True)
+                if r.get('snippet'):
+                    print(f"    💬 {r['snippet'][:200]}", flush=True)
+        else:
+            print("   ⚠️ 当前页没提取到搜索结果", flush=True)
+            print("   提示：确保页面显示的是搜索结果列表，然后重试", flush=True)
+
+    if all_results:
+        print(f"\n{'='*60}", flush=True)
+        print(f"📎 手动搜索共 {len(all_results)} 条结果", flush=True)
+        print(f"{'='*60}", flush=True)
+    return all_results
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="接力爬虫 — 人机协作万能搜索器（搜图 / 搜文字 / 读网页）",
@@ -851,12 +972,16 @@ if __name__ == "__main__":
     parser.add_argument("--min-size", type=int, default=100, help="最小图片宽度（仅搜图模式）")
     parser.add_argument("--manual", "-m", action="store_true",
                         help="手动模式：你浏览我提取")
+    parser.add_argument("--browser", default="edge",
+                        choices=["edge", "chromium"],
+                        help="浏览器引擎：edge（系统Edge，默认）或 chromium（Playwright自带）")
     args = parser.parse_args()
 
     # 读网页模式
     if args.read:
         asyncio.run(run(
             read_url=args.read, max_count=args.limit, manual=args.manual,
+            browser_choice=args.browser,
         ))
         sys.exit(0)
 
@@ -868,7 +993,7 @@ if __name__ == "__main__":
         text_engines = [e.strip() for e in args.engine.split(",") if e.strip()] if args.engine else TEXT_FALLBACK_CHAIN
         asyncio.run(run(
             query=args.query, engines=text_engines, max_count=args.limit,
-            search=True,
+            search=True, browser_choice=args.browser,
         ))
         sys.exit(0)
 
@@ -902,4 +1027,5 @@ if __name__ == "__main__":
         query=args.query, engines=valid_engines, url=args.url,
         max_count=args.limit, download=args.download,
         output_dir=args.output, manual=args.manual, min_size=args.min_size, free_only=args.free,
+        browser_choice=args.browser,
     ))
