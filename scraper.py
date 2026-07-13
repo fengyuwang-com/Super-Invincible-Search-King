@@ -35,6 +35,14 @@
 import asyncio, json, os, sys, argparse, urllib.request, urllib.parse, re, time, hashlib, concurrent.futures
 from pathlib import Path
 
+# CloakBrowser — 可选的反检测浏览器
+_CLOAK_AVAILABLE = False
+try:
+    from cloakbrowser import launch as cloak_launch
+    _CLOAK_AVAILABLE = True
+except ImportError:
+    pass
+
 sys.stdout.reconfigure(encoding='utf-8')
 
 from playwright.async_api import async_playwright, TimeoutError
@@ -1077,6 +1085,176 @@ async def read_multiple_pages(urls, browser_choice="edge", timeout=60):
         return results
 
 
+# ── CloakBrowser 模式（反检测） ────────────────────────────────────────
+
+def _cloak_detect_blocked(text):
+    keywords = ["sorry", "please verify", "captcha", "access denied", "403 forbidden",
+                "enable javascript", "your request has been blocked", "robot",
+                "cf-browser-verification", "just a moment", "attention required"]
+    return any(k in text.lower() for k in keywords)
+
+
+def cloak_read_pages(urls, timeout=60):
+    """同步版读网页 — 使用 CloakBrowser，能过 Cloudflare 等反爬"""
+    if not _CLOAK_AVAILABLE:
+        print("❌ CloakBrowser 未安装: pip install cloakbrowser", flush=True)
+        return [{"url": u, "title": "", "content": "", "error": "CloakBrowser not installed"} for u in urls]
+
+    print("🛡️  CloakBrowser 模式（反检测）", flush=True)
+    browser = cloak_launch(headless=True, humanize=True)
+
+    results = []
+    for url in urls:
+        page = browser.new_page()
+        try:
+            print(f"📖 [{url[:80]}]", flush=True)
+            page.goto(url, timeout=timeout * 1000, wait_until="domcontentloaded")
+            page.wait_for_timeout(2000)
+
+            body_text = page.inner_text("body") if page.query_selector("body") else ""
+            if _cloak_detect_blocked(body_text):
+                # 可能是误判，先看 URL 有没有被重定向到验证页
+                if page.url != url and "captcha" in page.url.lower() or "challenge" in page.url.lower():
+                    print(f"   🟡 被拦截（重定向到验证页）", flush=True)
+                    results.append({"url": url, "title": "", "content": "", "blocked": True})
+                    continue
+            # 页面正常加载
+            content = page.inner_text("body")[:50000] if page.query_selector("body") else ""
+            title = page.title()
+            print(f"   ✅ {title or url[:40]} ({len(content)}字)", flush=True)
+            results.append({"url": url, "title": title, "content": content})
+
+        except Exception as e:
+            print(f"   ❌ {str(e)[:60]}", flush=True)
+            results.append({"url": url, "title": "", "content": "", "error": str(e)})
+        finally:
+            page.close()
+
+    browser.close()
+
+    print(f"\n{'='*60}", flush=True)
+    print(f"📎 共读取 {len(results)} 个网页（CloakBrowser）", flush=True)
+    print(f"{'='*60}", flush=True)
+    for i, r in enumerate(results, 1):
+        if r.get('blocked'):
+            print(f"  [{i}] 🟡 被拦截 — {r['url']}", flush=True)
+        elif r.get('error'):
+            print(f"  [{i}] ❌ {r['error']} — {r['url']}", flush=True)
+        else:
+            t = (r.get('title') or '')[:50]
+            c = len(r.get('content') or '')
+            print(f"  [{i}] ✅ {t} ({c}字)", flush=True)
+            print(f"      {r['url']}")
+    return results
+
+
+def cloak_text_search(query, limit=10):
+    """同步版文字搜索 — 使用 CloakBrowser，JS 提取搜索结果"""
+    if not _CLOAK_AVAILABLE:
+        print("❌ CloakBrowser 未安装: pip install cloakbrowser", flush=True)
+        return []
+
+    print("🛡️  CloakBrowser 文字搜索（反检测）", flush=True)
+    browser = cloak_launch(headless=True, humanize=True)
+    page = browser.new_page()
+
+    bing_js = """
+    () => {
+        const items = [];
+        const algos = document.querySelectorAll("li.b_algo, .b_algo");
+        algos.forEach(el => {
+            const h2 = el.querySelector("h2");
+            const a = h2 ? h2.querySelector("a") : null;
+            if (!a) return;
+            const title = a.innerText.trim();
+            // Prefer the actual href. Only use cite if href is a Bing redirect.
+            let url = a.href;
+            if (!url || url.includes("bing.com/ck/") || url.includes("bing.com/url?")) {
+                const cite = el.querySelector("cite, .b_attribution");
+                url = cite ? cite.innerText.trim() : "";
+                if (url && !url.startsWith("http")) url = "https://" + url;
+            }
+            url = url.split(" ")[0].split("\\n")[0];
+            if (title && url && !url.includes("bing.com/")) items.push({title, url});
+        });
+        return items;
+    }
+    """
+    brave_js = """
+    () => {
+        const items = [];
+        const seen = new Set();
+        // Brave puts results in .result-content or .snippet containers
+        const containers = document.querySelectorAll(".result-content, [class*='result']");
+        containers.forEach(container => {
+            const link = container.querySelector("a[href]");
+            if (!link) return;
+            const href = link.href;
+            if (!href || !href.startsWith("http") || href.includes("brave.com")) return;
+            const title = container.querySelector("h2, h3, .heading, [class*='title']");
+            const text = title ? title.innerText.trim() : link.innerText.trim();
+            if (text.length < 5) return;
+            const key = href.split("?")[0];
+            if (!seen.has(key)) { seen.add(key); items.push({title: text.slice(0,100), url: href}); }
+        });
+        // Fallback: look for links with meaningful text
+        if (items.length < 3) {
+            const links = document.querySelectorAll("a[href]");
+            links.forEach(a => {
+                const href = a.href;
+                if (!href || !href.startsWith("http") || href.includes("brave.com")) return;
+                const text = a.innerText.trim();
+                if (text.length < 15) return;
+                const key = href.split("?")[0];
+                if (!seen.has(key)) { seen.add(key); items.push({title: text.slice(0,100), url: href}); }
+            });
+        }
+        return items;
+    }
+    """
+
+    engines = [
+        ("Bing", f"https://www.bing.com/search?q={urllib.parse.quote(query)}&count={limit}", bing_js),
+        ("Brave", f"https://search.brave.com/search?q={urllib.parse.quote(query)}", brave_js),
+    ]
+
+    all_results = []
+    for name, url, js_code in engines:
+        try:
+            print(f"  🔍 {name}...", flush=True)
+            page.goto(url, timeout=30000, wait_until="domcontentloaded")
+            page.wait_for_timeout(2000)
+            results = page.evaluate(js_code)
+            for r in results:
+                r["engine"] = name
+                all_results.append(r)
+            print(f"     → {len(results)} 结果", flush=True)
+
+        except Exception as e:
+            print(f"     ❌ {name}: {str(e)[:40]}", flush=True)
+
+    page.close()
+    browser.close()
+
+    # 去重
+    seen = set()
+    unique = []
+    for r in all_results:
+        key = r.get("url", "").split("?")[0]
+        if key and key not in seen:
+            seen.add(key)
+            unique.append(r)
+
+    print(f"\n{'='*60}", flush=True)
+    print(f"✅ 共 {len(unique)} 条结果（CloakBrowser）", flush=True)
+    print(f"{'='*60}", flush=True)
+    for i, r in enumerate(unique[:limit], 1):
+        print(f"  [{i}] {r['title'][:60]}", flush=True)
+        print(f"      {r['url']}", flush=True)
+
+    return unique[:limit]
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="接力爬虫 — 人机协作万能搜索器（搜图 / 搜文字 / 读网页）",
@@ -1103,7 +1281,20 @@ if __name__ == "__main__":
                         help="浏览器引擎：edge（系统Edge，默认）或 chromium（Playwright自带）")
     parser.add_argument("--lite", action="store_true",
                         help="轻量模式：纯HTTP搜索（DDG Lite），不开浏览器，更快")
+    parser.add_argument("--cloak", action="store_true",
+                        help="CloakBrowser 模式：反检测浏览器，绕过 Cloudflare/Bing/Brave 反爬")
     args = parser.parse_args()
+
+    # ── CloakBrowser 模式 ──
+    if args.cloak:
+        if not args.query and not args.read:
+            print("❌ --cloak 需要配合 --search 关键词 或 --read URL", flush=True)
+            sys.exit(1)
+        if args.read:
+            cloak_read_pages(args.read, args.limit)
+        elif args.search:
+            cloak_text_search(args.query, args.limit)
+        sys.exit(0)
 
     # 读网页模式（支持多个 URL 并行读取）
     if args.read:
