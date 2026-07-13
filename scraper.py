@@ -741,13 +741,25 @@ async def run(query=None, engines=None, url=None, max_count=5,
                 return
 
             all_results = []
-            for eng in text_engines:
-                result = await try_text_engine(page, eng, query, max_count)
+
+            async def search_one_text(ctx, eng, q, limit):
+                """单个文字搜索引擎（独立页面，并发执行）"""
+                p = await ctx.new_page()
+                try:
+                    return eng, await try_text_engine(p, eng, q, limit)
+                finally:
+                    await p.close()
+
+            tasks = [search_one_text(context, eng, query, max_count) for eng in text_engines]
+            gathered = await asyncio.gather(*tasks)
+
+            for eng, result in gathered:
+                name = TEXT_ENGINES[eng]['name']
                 if result:
                     all_results.extend(result)
-                    print(f"\n✅ [{TEXT_ENGINES[eng]['name']}] {len(result)} 条结果", flush=True)
+                    print(f"\n✅ [{name}] {len(result)} 条结果", flush=True)
                 else:
-                    print(f"   ❌ [{TEXT_ENGINES[eng]['name']}] 无结果", flush=True)
+                    print(f"   ❌ [{name}] 无结果", flush=True)
 
             # 所有引擎全挂了 → 手动模式兜底
             if not all_results:
@@ -800,15 +812,25 @@ async def run(query=None, engines=None, url=None, max_count=5,
                 await page.wait_for_timeout(1000)
             images = await extract_images(page, min_size, max_count)
 
-        # ----- 引擎链模式：挨个试，全部收集 -----
+        # ----- 引擎链模式：全部并发 -----
         elif query and engines:
-            for eng in engines:
-                result = await try_engine(page, eng, query, min_size, max_count)
+            async def search_one_image(ctx, eng, q, min_sz, max_cnt):
+                p = await ctx.new_page()
+                try:
+                    return eng, await try_engine(p, eng, q, min_sz, max_cnt)
+                finally:
+                    await p.close()
+
+            tasks = [search_one_image(context, eng, query, min_size, max_count) for eng in engines]
+            gathered = await asyncio.gather(*tasks)
+
+            for eng, result in gathered:
+                name = ENGINES[eng]['name']
                 if result:
                     images.extend(result)
-                    print(f"\n✅ [{ENGINES[eng]['name']}] {len(result)} 张图", flush=True)
+                    print(f"\n✅ [{name}] {len(result)} 张图", flush=True)
                 else:
-                    print(f"   ❌ [{ENGINES[eng]['name']}] 没出图", flush=True)
+                    print(f"   ❌ [{name}] 没出图", flush=True)
 
             # 去重（按URL）
             seen = set()
@@ -951,6 +973,110 @@ async def manual_text_extract(page, browser, max_count=20):
     return all_results
 
 
+def ddg_lite_search(query, limit=10):
+    """纯HTTP搜索，不用浏览器。爬 DuckDuckGo Lite HTML 版"""
+    url = "https://html.duckduckgo.com/html/"
+    data = urllib.parse.urlencode({"q": query}).encode()
+    req = urllib.request.Request(url, data=data, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            html = resp.read().decode("utf-8", errors="replace")
+    except Exception as e:
+        print(f"  ❌ DDG Lite: {e}")
+        return []
+    # 解析 result__a（标题+URL）和 result__snippet（摘要）
+    titles = re.findall(
+        r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>\s*([^<]+?)\s*</a>', html
+    )
+    snippets = re.findall(
+        r'<div[^>]+class="result__snippet"[^>]*>\s*(.*?)\s*</div>', html, re.DOTALL
+    )
+    # 清理 snippet 中的 HTML 标签
+    results = []
+    for i, (url_raw, title) in enumerate(titles[:limit]):
+        snippet = snippets[i].strip() if i < len(snippets) else ""
+        snippet = re.sub(r"<[^>]+>", "", snippet)  # strip HTML tags
+        results.append({
+            "title": title.strip(),
+            "url": urllib.parse.unquote(url_raw),
+            "snippet": snippet,
+            "engine": "DDG Lite",
+        })
+    return results
+
+
+async def read_multiple_pages(urls, browser_choice="edge", timeout=60):
+    """并行读取多个网页（headless，不弹浏览器窗口）"""
+    async with async_playwright() as p:
+        launch_kwargs = dict(
+            headless=True,
+            args=['--disable-blink-features=AutomationControlled',
+                  '--disable-automation', '--no-sandbox',
+                  '--disable-setuid-sandbox'],
+        )
+        if browser_choice == "edge":
+            launch_kwargs["channel"] = "msedge"
+            print("🌐 浏览器: Edge（headless 并行）", flush=True)
+        else:
+            print("🌐 浏览器: Chromium（headless 并行）", flush=True)
+        browser = await p.chromium.launch(**launch_kwargs)
+        context = await browser.new_context(
+            viewport={"width": 1400, "height": 900},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+            locale="zh-CN",
+        )
+        await context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', { get: () => false });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
+            window.chrome = { runtime: {} };
+        """)
+
+        async def read_one(url):
+            page = await context.new_page()
+            try:
+                print(f"📖 [{url[:80]}]", flush=True)
+                await page.goto(url, timeout=timeout * 1000, wait_until="domcontentloaded")
+                await page.wait_for_timeout(2000)
+
+                page_text = await page.inner_text("body") if await page.query_selector("body") else ""
+                if detect_captcha(page_text) or detect_blocked(page_text):
+                    print(f"   🟡 被拦截（验证码/403）", flush=True)
+                    return {"url": url, "title": "", "content": "", "blocked": True}
+
+                content = await extract_page_content(page)
+                title = await page.title()
+                print(f"   ✅ {title or url[:40]} ({len(content)}字)", flush=True)
+                return {"url": url, "title": title, "content": content}
+            except Exception as e:
+                print(f"   ❌ {str(e)[:60]}", flush=True)
+                return {"url": url, "title": "", "content": "", "error": str(e)}
+            finally:
+                await page.close()
+
+        tasks = [read_one(url) for url in urls]
+        results = await asyncio.gather(*tasks)
+        await browser.close()
+
+        print(f"\n{'='*60}", flush=True)
+        print(f"📎 共读取 {len(results)} 个网页", flush=True)
+        print(f"{'='*60}", flush=True)
+        for i, r in enumerate(results, 1):
+            if r.get('blocked'):
+                print(f"  [{i}] 🟡 被拦截 — {r['url']}", flush=True)
+            elif r.get('error'):
+                print(f"  [{i}] ❌ {r['error']} — {r['url']}", flush=True)
+            else:
+                t = (r.get('title') or '')[:50]
+                c = len(r.get('content') or '')
+                print(f"  [{i}] ✅ {t} ({c}字)", flush=True)
+                print(f"      {r['url']}")
+
+        return results
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="接力爬虫 — 人机协作万能搜索器（搜图 / 搜文字 / 读网页）",
@@ -962,8 +1088,8 @@ if __name__ == "__main__":
     parser.add_argument("--url", "-u", help="目标网页 URL")
     parser.add_argument("--search", action="store_true",
                         help="文字搜索模式（默认是搜图）")
-    parser.add_argument("--read", metavar="URL",
-                        help="读网页模式：打开 URL 提取正文")
+    parser.add_argument("--read", metavar="URL", nargs='+',
+                        help="读网页模式：打开一个或多个 URL 提取正文（多个URL时并行读取，headless无窗口）")
     parser.add_argument("--free", action="store_true",
                         help=f"仅用免费摄影站: {', '.join(FREE_SITE_KEYS)}")
     parser.add_argument("--download", "-d", action="store_true", help="下载图片")
@@ -975,14 +1101,21 @@ if __name__ == "__main__":
     parser.add_argument("--browser", default="edge",
                         choices=["edge", "chromium"],
                         help="浏览器引擎：edge（系统Edge，默认）或 chromium（Playwright自带）")
+    parser.add_argument("--lite", action="store_true",
+                        help="轻量模式：纯HTTP搜索（DDG Lite），不开浏览器，更快")
     args = parser.parse_args()
 
-    # 读网页模式
+    # 读网页模式（支持多个 URL 并行读取）
     if args.read:
-        asyncio.run(run(
-            read_url=args.read, max_count=args.limit, manual=args.manual,
-            browser_choice=args.browser,
-        ))
+        if len(args.read) == 1:
+            # 单个 URL：保留原行为（含 manual 交互模式）
+            asyncio.run(run(
+                read_url=args.read[0], max_count=args.limit, manual=args.manual,
+                browser_choice=args.browser,
+            ))
+        else:
+            # 多个 URL：headless 并行读取
+            asyncio.run(read_multiple_pages(args.read, args.browser, args.limit))
         sys.exit(0)
 
     # 文字搜索模式
@@ -990,6 +1123,21 @@ if __name__ == "__main__":
         if not args.query:
             print("❌ 文字搜索需要提供关键词", flush=True)
             sys.exit(1)
+        if args.lite:
+            # 轻量模式：纯 HTTP，不开浏览器
+            print("🔵 [DDG Lite] 纯HTTP搜索（无浏览器）", flush=True)
+            results = ddg_lite_search(args.query, args.limit)
+            if results:
+                print(f"\n✅ 共 {len(results)} 条结果", flush=True)
+                print(f"{'='*60}", flush=True)
+                for i, r in enumerate(results, 1):
+                    print(f"\n[{i}] {r['title']}", flush=True)
+                    print(f"    🔗 {r['url']}", flush=True)
+                    if r.get('snippet'):
+                        print(f"    💬 {r['snippet'][:200]}", flush=True)
+            else:
+                print("❌ 无结果", flush=True)
+            sys.exit(0)
         text_engines = [e.strip() for e in args.engine.split(",") if e.strip()] if args.engine else TEXT_FALLBACK_CHAIN
         asyncio.run(run(
             query=args.query, engines=text_engines, max_count=args.limit,
