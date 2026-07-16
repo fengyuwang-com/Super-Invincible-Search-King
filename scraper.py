@@ -47,6 +47,18 @@ sys.stdout.reconfigure(encoding='utf-8')
 
 from playwright.async_api import async_playwright, TimeoutError
 
+# ── opencli 浏览器抓取插件（可选）──
+_OPENCLI_AVAILABLE = False
+try:
+    from . import scraper_fetch as opencli_fetch
+    _OPENCLI_AVAILABLE = True
+except ImportError:
+    try:
+        import scraper_fetch as opencli_fetch
+        _OPENCLI_AVAILABLE = True
+    except ImportError:
+        pass
+
 
 # ============================================================
 # 搜索引擎 & 免费图库配置
@@ -641,13 +653,13 @@ async def extract_page_content(page):
 
 async def run(query=None, engines=None, url=None, max_count=5,
               download=False, output_dir=".", manual=False, min_size=100, free_only=False,
-              search=False, read_url=None, browser_choice="edge"):
+              search=False, read_url=None, browser_choice="edge", headless=True):
     """主循环：搜图 / 搜文字 / 读网页"""
 
     async with async_playwright() as p:
         # 浏览器选择：edge（真 Edge）vs chromium（Playwright 自带）
         launch_kwargs = dict(
-            headless=False,
+            headless=headless,
             args=[
                 '--disable-blink-features=AutomationControlled',
                 '--disable-automation',
@@ -1016,11 +1028,11 @@ def ddg_lite_search(query, limit=10):
     return results
 
 
-async def read_multiple_pages(urls, browser_choice="edge", timeout=60):
+async def read_multiple_pages(urls, browser_choice="edge", timeout=60, headless=True):
     """并行读取多个网页（headless，不弹浏览器窗口）"""
     async with async_playwright() as p:
         launch_kwargs = dict(
-            headless=True,
+            headless=headless,
             args=['--disable-blink-features=AutomationControlled',
                   '--disable-automation', '--no-sandbox',
                   '--disable-setuid-sandbox'],
@@ -1094,14 +1106,14 @@ def _cloak_detect_blocked(text):
     return any(k in text.lower() for k in keywords)
 
 
-def cloak_read_pages(urls, timeout=60):
+def cloak_read_pages(urls, timeout=60, headless=True):
     """同步版读网页 — 使用 CloakBrowser，能过 Cloudflare 等反爬"""
     if not _CLOAK_AVAILABLE:
         print("❌ CloakBrowser 未安装: pip install cloakbrowser", flush=True)
         return [{"url": u, "title": "", "content": "", "error": "CloakBrowser not installed"} for u in urls]
 
     print("🛡️  CloakBrowser 模式（反检测）", flush=True)
-    browser = cloak_launch(headless=True, humanize=True)
+    browser = cloak_launch(headless=headless, humanize=True)
 
     results = []
     for url in urls:
@@ -1148,14 +1160,14 @@ def cloak_read_pages(urls, timeout=60):
     return results
 
 
-def cloak_text_search(query, limit=10):
+def cloak_text_search(query, limit=10, headless=True):
     """同步版文字搜索 — 使用 CloakBrowser，JS 提取搜索结果"""
     if not _CLOAK_AVAILABLE:
         print("❌ CloakBrowser 未安装: pip install cloakbrowser", flush=True)
         return []
 
     print("🛡️  CloakBrowser 文字搜索（反检测）", flush=True)
-    browser = cloak_launch(headless=True, humanize=True)
+    browser = cloak_launch(headless=headless, humanize=True)
     page = browser.new_page()
 
     bing_js = """
@@ -1263,59 +1275,131 @@ if __name__ == "__main__":
     parser.add_argument("query", nargs="?", help="搜索关键词")
     parser.add_argument("--engine", "-e", default="",
                         help=f"图片搜索引擎链（逗号分隔），默认: {','.join(FALLBACK_CHAIN)}")
-    parser.add_argument("--url", "-u", help="目标网页 URL")
+    parser.add_argument("--url", "-u", help="图片搜索：目标网页 URL")
     parser.add_argument("--search", action="store_true",
                         help="文字搜索模式（默认是搜图）")
     parser.add_argument("--read", metavar="URL", nargs='+',
-                        help="读网页模式：打开一个或多个 URL 提取正文（多个URL时并行读取，headless无窗口）")
+                        help="读网页模式：打开一个或多个 URL 提取正文")
     parser.add_argument("--free", action="store_true",
                         help=f"仅用免费摄影站: {', '.join(FREE_SITE_KEYS)}")
     parser.add_argument("--download", "-d", action="store_true", help="下载图片")
     parser.add_argument("--output", "-o", default=".", help="下载目录")
     parser.add_argument("--limit", "-n", type=int, default=5, help="最大结果数")
     parser.add_argument("--min-size", type=int, default=100, help="最小图片宽度（仅搜图模式）")
-    parser.add_argument("--manual", "-m", action="store_true",
-                        help="手动模式：你浏览我提取")
-    parser.add_argument("--browser", default="edge",
-                        choices=["edge", "chromium"],
-                        help="浏览器引擎：edge（系统Edge，默认）或 chromium（Playwright自带）")
-    parser.add_argument("--lite", action="store_true",
-                        help="轻量模式：纯HTTP搜索（DDG Lite），不开浏览器，更快")
-    parser.add_argument("--cloak", action="store_true",
-                        help="CloakBrowser 模式：反检测浏览器，绕过 Cloudflare/Bing/Brave 反爬")
+    parser.add_argument("--backend", default="edge",
+                        choices=["edge", "chromium", "lite", "cloak", "manual", "opencli"],
+                        help="后端: edge(默认)/chromium=Playwright, lite=纯HTTP, cloak=反检测, manual=手动浏览, opencli=系统Edge浏览器(可保持会话)")
+    parser.add_argument("--show", action="store_true",
+                        help="显示浏览器窗口（默认 headless 不显示）")
+    # ── opencli 抓取模式参数 ──
+    parser.add_argument("--fetch", choices=["xueqiu", "bilibili"],
+                        help="抓取模式: xueqiu(雪球) / bilibili(B站)（与 --backend opencli 配合）")
+    parser.add_argument("--user-id", type=int,
+                        help="雪球用户 ID（配合 --fetch xueqiu）")
+    parser.add_argument("--mid", type=int,
+                        help="B 站用户 mid（配合 --fetch bilibili）")
+    parser.add_argument("--audio", action="store_true",
+                        help="下载 B 站音频（配合 --fetch bilibili）")
+    parser.add_argument("--pages", type=int, default=99,
+                        help="抓取最大页数（默认 99）")
     args = parser.parse_args()
 
+    headless = not args.show
+
+    # ── opencli 浏览器后端 ──
+    if args.backend == "opencli":
+        if not _OPENCLI_AVAILABLE:
+            print("❌ opencli 未安装。安装: npm install -g opencli", flush=True)
+            sys.exit(1)
+
+        if args.fetch == "xueqiu":
+            if not args.user_id:
+                print("❌ 雪球抓取需要 --user-id", flush=True)
+                sys.exit(1)
+            posts = opencli_fetch.xueqiu_posts(args.user_id, args.pages)
+            print(f"\n共 {len(posts)} 条帖子", flush=True)
+            sys.exit(0)
+
+        elif args.fetch == "bilibili":
+            if not args.mid:
+                print("❌ B 站抓取需要 --mid", flush=True)
+                sys.exit(1)
+            if args.audio:
+                result = opencli_fetch.bilibili_audio(
+                    args.mid, args.output or ".", args.limit
+                )
+            else:
+                videos = opencli_fetch.bilibili_videos(args.mid)
+                print(f"\n共 {len(videos)} 个视频:", flush=True)
+                import re as _re
+                for v in videos[:20]:
+                    t = (v.get('title', '') or '')[:60]
+                    print(f"  {v['bv']}  {t}", flush=True)
+                if len(videos) > 20:
+                    print(f"  ... 还有 {len(videos) - 20} 个", flush=True)
+            sys.exit(0)
+
+        elif args.read:
+            for url in args.read:
+                scroll = input(f"是否滚动页面 {url}? (y/N): ").strip().lower() == 'y'
+                result = opencli_fetch.read_page(url, scroll=scroll)
+                if result:
+                    if result.get('blocked'):
+                        print(f"  🤖 页面被拦截（WAF/验证码）", flush=True)
+                        print(f"  文本预览: {result.get('content', '')[:200]}", flush=True)
+                    else:
+                        content = result.get('content', '')
+                        title = result.get('title', '')
+                        print(f"\n📄 {title} ({len(content)}字)", flush=True)
+                        print(f"{'='*60}", flush=True)
+                        for line in content.split('\n')[:100]:
+                            print(line, flush=True)
+            sys.exit(0)
+
+        else:
+            print("❌ opencli 模式需要 --read URL 或 --fetch xueqiu/bilibili", flush=True)
+            sys.exit(1)
+
     # ── CloakBrowser 模式 ──
-    if args.cloak:
+    if args.backend == "cloak":
         if not args.query and not args.read:
-            print("❌ --cloak 需要配合 --search 关键词 或 --read URL", flush=True)
+            print("❌ --backend cloak 需要 --search 关键词 或 --read URL", flush=True)
             sys.exit(1)
         if args.read:
-            cloak_read_pages(args.read, args.limit)
+            cloak_read_pages(args.read, args.limit, headless=headless)
         elif args.search:
-            cloak_text_search(args.query, args.limit)
+            cloak_text_search(args.query, args.limit, headless=headless)
         sys.exit(0)
 
-    # 读网页模式（支持多个 URL 并行读取）
+    # ── Manual 模式：你浏览我提取 ──
+    if args.backend == "manual":
+        if not args.read:
+            print("❌ --backend manual 仅支持 --read URL", flush=True)
+            sys.exit(1)
+        asyncio.run(run(
+            read_url=args.read[0], max_count=args.limit, manual=True,
+            browser_choice="edge", headless=headless,
+        ))
+        sys.exit(0)
+
+    # ── 读网页模式 ──
     if args.read:
+        bc = args.backend if args.backend in ("edge", "chromium") else "edge"
         if len(args.read) == 1:
-            # 单个 URL：保留原行为（含 manual 交互模式）
             asyncio.run(run(
-                read_url=args.read[0], max_count=args.limit, manual=args.manual,
-                browser_choice=args.browser,
+                read_url=args.read[0], max_count=args.limit, manual=False,
+                browser_choice=bc, headless=headless,
             ))
         else:
-            # 多个 URL：headless 并行读取
-            asyncio.run(read_multiple_pages(args.read, args.browser, args.limit))
+            asyncio.run(read_multiple_pages(args.read, bc, args.limit, headless=headless))
         sys.exit(0)
 
-    # 文字搜索模式
+    # ── 文字搜索模式 ──
     if args.search:
         if not args.query:
             print("❌ 文字搜索需要提供关键词", flush=True)
             sys.exit(1)
-        if args.lite:
-            # 轻量模式：纯 HTTP，不开浏览器
+        if args.backend == "lite":
             print("🔵 [DDG Lite] 纯HTTP搜索（无浏览器）", flush=True)
             results = ddg_lite_search(args.query, args.limit)
             if results:
@@ -1330,21 +1414,22 @@ if __name__ == "__main__":
                 print("❌ 无结果", flush=True)
             sys.exit(0)
         text_engines = [e.strip() for e in args.engine.split(",") if e.strip()] if args.engine else TEXT_FALLBACK_CHAIN
+        bc = args.backend if args.backend in ("edge", "chromium") else "edge"
         asyncio.run(run(
             query=args.query, engines=text_engines, max_count=args.limit,
-            search=True, browser_choice=args.browser,
+            search=True, browser_choice=bc, headless=headless,
         ))
         sys.exit(0)
 
-    # 图片搜索模式（原有逻辑）
+    # ── 图片搜索模式（默认） ──
+    if args.backend == "lite":
+        print("❌ --backend lite 仅支持文字搜索（配合 --search）", flush=True)
+        sys.exit(1)
     if not args.query and not args.url:
         parser.print_help()
         sys.exit(1)
 
-    # 解析引擎链
     engine_ids = [e.strip() for e in args.engine.split(",") if e.strip()] if args.engine else FALLBACK_CHAIN.copy()
-
-    # --free 模式：只用免费摄影站
     if args.free:
         engine_ids = FREE_SITE_KEYS.copy()
 
@@ -1353,7 +1438,6 @@ if __name__ == "__main__":
         print(f"❌ 无效引擎: {args.engine}，可用: {', '.join(ENGINES.keys())}", flush=True)
         sys.exit(1)
 
-    # 打印许可证摘要
     free_count = sum(1 for e in valid_engines if ENGINES[e].get("license", "").startswith("✅"))
     unknown_count = sum(1 for e in valid_engines if ENGINES[e].get("license", "").startswith("⚠️"))
     print(f"🔍 引擎: {', '.join(ENGINES[e]['name'] for e in valid_engines)}", flush=True)
@@ -1362,9 +1446,10 @@ if __name__ == "__main__":
     if unknown_count:
         print(f"⚠️ {unknown_count} 个搜索引擎（版权未知，自行核实）", flush=True)
 
+    bc = args.backend if args.backend in ("edge", "chromium") else "edge"
     asyncio.run(run(
         query=args.query, engines=valid_engines, url=args.url,
         max_count=args.limit, download=args.download,
-        output_dir=args.output, manual=args.manual, min_size=args.min_size, free_only=args.free,
-        browser_choice=args.browser,
+        output_dir=args.output, manual=False, min_size=args.min_size, free_only=args.free,
+        browser_choice=bc, headless=headless,
     ))
