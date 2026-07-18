@@ -1,0 +1,4 @@
+stdout: 
+stderr: ✖  SyntaxError: Illegal return statement
+
+rc: 1

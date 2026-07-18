@@ -1,0 +1,7 @@
+Navigate stdout: {
+  "url": "https://space.bilibili.com/473168952/lists",
+  "page": "59BDC3AF26623571AD45F2FB04CB7108"
+}
+
+Navigate stderr: 
+Navigate rc: 0

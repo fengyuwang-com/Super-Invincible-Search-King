@@ -1,0 +1,8 @@
+JS: (function() { var links = document.querySelectorAll("a"); var out = []; links.forEach(function(a) { var href = a.getAttribute('href') || ''; if (href.indexOf('/lists/') > -1) { var text = a.textContent.trim().substring(0, 80); out.push({href: href, text: text}); } }); return JSON.stringify(out); })()
+
+CMD: opencli browser bilibili_lists eval "(function() { var links = document.querySelectorAll(\"a\"); var out = []; links.forEach(function(a) { var href = a.getAttribute('href') || ''; if (href.indexOf('/lists/') > -1) { var text = a.textContent.trim().substring(0, 80); out.push({href: href, text: text}); } }); return JSON.stringify(out); })()"
+
+stdout: []
+
+stderr: 
+rc: 0

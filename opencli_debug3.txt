@@ -1,0 +1,16 @@
+EXPR: location.href
+  stdout: 'https://space.bilibili.com/473168952/lists\n'
+  stderr: ''
+  rc: 0
+EXPR: document.title
+  stdout: '奇衡DK-CAPITAL视频专辑-奇衡DK-CAPITAL视频合集-哔哩哔哩视频\n'
+  stderr: ''
+  rc: 0
+EXPR: document.body.innerHTML.length
+  stdout: '188694\n'
+  stderr: ''
+  rc: 0
+EXPR: navigator.userAgent
+  stdout: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0\n'
+  stderr: ''
+  rc: 0

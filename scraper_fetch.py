@@ -13,7 +13,7 @@ import subprocess, json, time, sys, os, re, random
 def check_opencli():
     """检测 opencli 是否可用"""
     try:
-        result = subprocess.run(["opencli", "--version"], capture_output=True, text=True, timeout=5)
+        result = subprocess.run("opencli --version", shell=True, capture_output=True, text=True, timeout=5)
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
@@ -22,7 +22,7 @@ def check_opencli():
 def check_ytdlp():
     """检测 yt-dlp 是否可用"""
     try:
-        result = subprocess.run(["yt-dlp", "--version"], capture_output=True, text=True, timeout=5)
+        result = subprocess.run("yt-dlp --version", shell=True, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5)
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
@@ -32,27 +32,29 @@ def check_ytdlp():
 
 def browser_eval(session, js):
     """在 opencli 浏览器中执行 JS，返回 stdout"""
+    # 压缩为一行（多行 JS 通过 shell 传给 opencli 会断）
+    js = re.sub(r'\s*\n\s*', ' ', js).strip()
     cmd = f'opencli browser {session} eval {json.dumps(js)}'
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30)
     return result.stdout
 
 
 def browser_nav(session, url):
     """让 opencli 浏览器导航到 URL"""
     cmd = f'opencli browser {session} open {json.dumps(url)}'
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=15)
+    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=15)
     return result.returncode == 0
 
 
 def get_session(session="king_fetch"):
     """获取现有 opencli 浏览器会话，没有则创建"""
     cmd = f'opencli browser {session} eval "location.href"'
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
+    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=10)
     if result.returncode == 0 and result.stdout.strip():
         return session
     # 会话不存在，尝试创建（通过 open --new）
     cmd = f'opencli browser --new {session} 2>&1'
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=15)
+    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=15)
     if result.returncode == 0:
         return session
     return None
@@ -92,16 +94,13 @@ def xueqiu_posts(user_id, max_pages=99, session="king_fetch"):
         js = """
         (function() {
             var text = document.body.innerText;
-            // 检查是不是 WAF 页面
-            if (text.includes('验证') || text.includes('captcha') || text.includes('captcha')) {
+            if (text.includes('验证') || text.toLowerCase().includes('captcha')) {
                 return JSON.stringify({waf: true, text: text.substring(0, 500)});
             }
-            // 尝试解析 JSON
             try {
                 var data = JSON.parse(text);
                 return JSON.stringify({waf: false, data: data});
             } catch(e) {
-                // 可能是 WAF 的 HTML 页面
                 return JSON.stringify({waf: true, text: text.substring(0, 500)});
             }
         })()
@@ -123,7 +122,11 @@ def xueqiu_posts(user_id, max_pages=99, session="king_fetch"):
             print(f"🤖 遇到 WAF 人机验证！", flush=True)
             print(f"   页面: {result.get('text', '')[:100]}", flush=True)
             print(f"   请在浏览器中完成验证，完成后按 Enter 继续...", flush=True)
-            input()
+            try:
+                input()
+            except EOFError:
+                print("⚠️ 非交互模式，跳过 WAF 页面")
+                continue
             # 重新加载当前页
             browser_nav(sess, api_url)
             time.sleep(3)
@@ -138,7 +141,7 @@ def xueqiu_posts(user_id, max_pages=99, session="king_fetch"):
 
         if result and not result.get('waf'):
             data = result.get('data', {})
-            posts = data.get('posts', []) if isinstance(data, dict) else \
+            posts = data.get('statuses') or data.get('posts') or [] if isinstance(data, dict) else \
                     (data if isinstance(data, list) else [])
             if not posts:
                 print("无更多帖子")
@@ -158,7 +161,10 @@ def xueqiu_posts(user_id, max_pages=99, session="king_fetch"):
         else:
             print(f"⚠️ 解析失败，可能是 WAF 拦截", flush=True)
             print(f"   输入 'r' 重试，Enter 跳过，'done' 退出: ", end="", flush=True)
-            choice = input().strip().lower()
+            try:
+                choice = input().strip().lower()
+            except EOFError:
+                choice = ''
             if choice == 'done':
                 break
             elif choice == 'r':
@@ -352,6 +358,173 @@ def bilibili_audio(mid, output_dir=None, quality="9", session="king_fetch"):
     return videos
 
 
+# ── B 站合集（系列）抓取 ──
+
+def bilibili_series(mid, session="king_fetch"):
+    """
+    抓取 B 站用户全部合集/系列及其视频。
+    返回: [{name, count, url, videos: [{bv, title}]}, ...]
+    按合集顺序排列，每合集内保留原始排列顺序（含序号）。
+    """
+    import time, json, re
+    if not check_opencli():
+        print("opencli 未安装。安装: npm install -g opencli")
+        return []
+
+    sess = get_session(session)
+    if not sess:
+        print("无法创建 opencli 浏览器会话")
+        return []
+
+    lists_url = f"https://space.bilibili.com/{mid}/lists"
+    print(f"打开合集页: {lists_url}")
+    browser_nav(sess, lists_url)
+    time.sleep(5)
+
+    # 获取全部合集名称和个数
+    js_names = """
+    (function() {
+        var titles = document.querySelectorAll(".video-list__title");
+        var descs = document.querySelectorAll(".video-list__desc");
+        var out = [];
+        titles.forEach(function(t, i) {
+            var count = descs[i] ? descs[i].textContent.trim().replace(/[^0-9]/g, '') : '';
+            out.push({name: t.textContent.trim(), count: parseInt(count) || 0});
+        });
+        return JSON.stringify(out);
+    })()
+    """
+    import json as _json
+    names_raw = browser_eval(sess, js_names)
+    series_meta = []
+    for line in names_raw.split('\n'):
+        line = line.strip()
+        if line.startswith('['):
+            try:
+                series_meta = _json.loads(line)
+            except:
+                pass
+            break
+
+    total = len(series_meta)
+    print(f"发现 {total} 个合集/系列")
+
+    all_series = []
+    for idx in range(total):
+        name = series_meta[idx]['name'] if idx < len(series_meta) else f'series_{idx}'
+        expected = series_meta[idx]['count'] if idx < len(series_meta) else 0
+        print(f"\n[{idx+1}/{total}] {name} ({expected}集)")
+
+        # 点击第 idx 个"查看更多"按钮
+        click_js = f"""
+        (function() {{
+            var btns = document.querySelectorAll("button");
+            var count = 0;
+            for (var i = 0; i < btns.length; i++) {{
+                if (btns[i].textContent.trim().includes("查看更多")) {{
+                    if (count === {idx}) {{
+                        btns[i].click();
+                        return true;
+                    }}
+                    count++;
+                }}
+            }}
+            return false;
+        }})()
+        """
+        browser_eval(sess, click_js)
+        time.sleep(4)
+
+        # 获取系列详情页视频列表
+        series_url = browser_eval(sess, "location.href").strip()
+        videos = _get_series_videos(sess)
+
+        # 尝试翻页（合集可能有多页，每页30集）
+        max_pages = 5
+        for pg in range(2, max_pages + 1):
+            if len(videos) >= expected:
+                break
+            # 点击页码按钮
+            page_js = f"""
+            (function() {{
+                var pageBtns = document.querySelectorAll(".vui_pagenation--btn-num, .pagination-btn, [class*=page], button");
+                for (var i = 0; i < pageBtns.length; i++) {{
+                    if (pageBtns[i].textContent.trim() === "{pg}") {{
+                        pageBtns[i].click();
+                        return true;
+                    }}
+                }}
+                // Try next page button
+                var nextBtns = document.querySelectorAll(".vui_pagenation--btn-next, .next-page");
+                if (nextBtns.length) {{
+                    nextBtns[0].click();
+                    return true;
+                }}
+                return false;
+            }})()
+            """
+            clicked = browser_eval(sess, page_js)
+            if 'true' not in clicked:
+                break
+            time.sleep(3)
+            more = _get_series_videos(sess)
+            # Merge new videos (avoid duplicates by BV)
+            existing_bvs = {v['bv'] for v in videos}
+            for v in more:
+                if v['bv'] not in existing_bvs:
+                    videos.append(v)
+                    existing_bvs.add(v['bv'])
+            print(f"  翻页 {pg}: 累计 {len(videos)}/{expected}")
+
+        count = len(videos)
+        status = "✓" if count >= expected else f"({count}/{expected})"
+        print(f"  → {count}集 {status}")
+
+        all_series.append({
+            'name': name,
+            'url': series_url,
+            'count': count,
+            'videos': videos
+        })
+
+        # 返回合集列表页
+        browser_eval(sess, "history.back()")
+        time.sleep(5)
+
+    print(f"\n全部完成: {len(all_series)} 个合集, "
+          f"共 {sum(s['count'] for s in all_series)} 个视频")
+    return all_series
+
+
+def _get_series_videos(session):
+    """从当前系列详情页提取所有视频 BV + 标题"""
+    js = """
+    (function() {
+        var cards = document.querySelectorAll(".bili-video-card");
+        var out = [];
+        cards.forEach(function(c) {
+            var titleEl = c.querySelector('.bili-video-card__title');
+            var a = c.querySelector('a[href*="/video/"]');
+            var href = a ? a.getAttribute('href') : '';
+            var m = href.match(/BV[a-zA-Z0-9]+/);
+            var title = titleEl ? titleEl.textContent.trim() : '';
+            if (m) out.push({bv: m[0], title: title});
+        });
+        return JSON.stringify(out);
+    })()
+    """
+    import json as _json
+    raw = browser_eval(session, js)
+    for line in raw.split('\n'):
+        line = line.strip()
+        if line.startswith('['):
+            try:
+                return _json.loads(line)
+            except:
+                pass
+    return []
+
+
 # ── 通用页面抓取 ──
 
 def read_page(url, session="king_fetch", scroll=False):
@@ -385,7 +558,6 @@ def read_page(url, session="king_fetch", scroll=False):
     (function() {
         var title = document.title;
         var text = document.body.innerText || '';
-        // 检测是否被拦截
         var blocked = text.includes('验证') || text.includes('captcha') ||
                       text.toLowerCase().includes('access denied') ||
                       text.toLowerCase().includes('please verify');
@@ -417,6 +589,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="opencli 浏览器抓取工具")
     parser.add_argument("--xueqiu", type=int, help="雪球用户 ID")
     parser.add_argument("--bilibili", type=int, help="B 站用户 mid")
+    parser.add_argument("--series", action="store_true", help="按合集分类（配合 --bilibili）")
     parser.add_argument("--read", help="通用页面抓取")
     parser.add_argument("--scroll", action="store_true", help="页面滚动（配合 --read）")
     parser.add_argument("--pages", type=int, default=99, help="最大页数（雪球）")
@@ -429,7 +602,14 @@ if __name__ == "__main__":
     if args.xueqiu:
         xueqiu_posts(args.xueqiu, args.pages, args.session)
     elif args.bilibili:
-        if args.audio:
+        if args.series:
+            series = bilibili_series(args.bilibili, args.session)
+            if series:
+                out_file = f"bilibili_series_{args.bilibili}.json"
+                with open(out_file, "w", encoding="utf-8") as f:
+                    json.dump(series, f, ensure_ascii=False, indent=2)
+                print(f"\n已保存到 {out_file}")
+        elif args.audio:
             bilibili_audio(args.bilibili, args.output, args.quality, args.session)
         else:
             videos = bilibili_videos(args.bilibili, session=args.session)
