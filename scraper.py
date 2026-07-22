@@ -45,6 +45,14 @@ except ImportError:
 
 sys.stdout.reconfigure(encoding='utf-8')
 
+# Crawl4AI — 深度网页转 Markdown（可选）
+_CRAWL4AI_AVAILABLE = False
+try:
+    from crawl4ai import AsyncWebCrawler
+    _CRAWL4AI_AVAILABLE = True
+except ImportError:
+    pass
+
 from playwright.async_api import async_playwright, TimeoutError
 
 # ── opencli 浏览器抓取插件（可选）──
@@ -1097,6 +1105,54 @@ async def read_multiple_pages(urls, browser_choice="edge", timeout=60, headless=
         return results
 
 
+# ── Crawl4AI 模式（深度网页 → Markdown） ─────────────────────────────
+
+async def crawl_extract(urls, headless=True, output_dir="."):
+    """使用 Crawl4AI 深度提取网页内容为结构化 Markdown"""
+    if not _CRAWL4AI_AVAILABLE:
+        print("❌ Crawl4AI 未安装: pip install crawl4ai", flush=True)
+        return
+
+    print("🕷️  Crawl4AI 深度提取模式（浏览器渲染 + LLM 友好输出）", flush=True)
+
+    async with AsyncWebCrawler(verbose=False) as crawler:
+        for url in urls:
+            print(f"\n📖 [{url[:80]}]", flush=True)
+            try:
+                result = await crawler.arun(
+                    url=url,
+                    bypass_cache=True,
+                )
+                if result.success:
+                    md = result.markdown or ""
+                    title = url
+                    # Try to extract title from markdown
+                    first_line = md.split('\n')[0] if md else ''
+                    if first_line.startswith('# '):
+                        title = first_line[2:].strip()
+                    print(f"   ✅ {title[:60]} ({len(md)}字)", flush=True)
+
+                    # Display
+                    print(f"{'='*60}", flush=True)
+                    for line in md.split('\n')[:150]:
+                        print(line, flush=True)
+                    if len(md.split('\n')) > 150:
+                        print(f"\n... (共 {len(md.split('\n'))} 行，仅显示前 150 行)", flush=True)
+
+                    # Save if output dir specified
+                    if output_dir != ".":
+                        safe = re.sub(r'[^\w]', '_', url.split('//')[-1].split('/')[0]) or "page"
+                        fpath = Path(output_dir) / f"crawl_{safe}.md"
+                        with open(fpath, "w", encoding="utf-8") as f:
+                            f.write(md)
+                        print(f"💾 已保存: {fpath}", flush=True)
+                else:
+                    err = result.error_message or "unknown error"
+                    print(f"   ❌ {err[:80]}", flush=True)
+            except Exception as e:
+                print(f"   ❌ 异常: {str(e)[:100]}", flush=True)
+
+
 # ── CloakBrowser 模式（反检测） ────────────────────────────────────────
 
 def _cloak_detect_blocked(text):
@@ -1280,6 +1336,8 @@ if __name__ == "__main__":
                         help="文字搜索模式（默认是搜图）")
     parser.add_argument("--read", metavar="URL", nargs='+',
                         help="读网页模式：打开一个或多个 URL 提取正文")
+    parser.add_argument("--crawl", metavar="URL", nargs='+',
+                        help="爬虫模式（Crawl4AI）：浏览器渲染 + 深度提取为结构化 Markdown，JS 重页面首选")
     parser.add_argument("--free", action="store_true",
                         help=f"仅用免费摄影站: {', '.join(FREE_SITE_KEYS)}")
     parser.add_argument("--download", "-d", action="store_true", help="下载图片")
@@ -1380,6 +1438,11 @@ if __name__ == "__main__":
             read_url=args.read[0], max_count=args.limit, manual=True,
             browser_choice="edge", headless=headless,
         ))
+        sys.exit(0)
+
+    # ── Crawl4AI 爬虫模式 ──
+    if args.crawl:
+        asyncio.run(crawl_extract(args.crawl, headless=headless, output_dir=args.output))
         sys.exit(0)
 
     # ── 读网页模式 ──

@@ -47,51 +47,30 @@ metadata:
 
 **遇到验证码 → 自动切手动模式**：浏览器保持打开，你处理完验证码后按 Enter，我提取内容。
 
-### 🕷️ 抓取模式（opencli 浏览器）
+### 📖 读网页模式
 
-`python scraper.py --backend opencli --fetch <site> [选项]`
+`python scraper.py --read <URL> [URL2 URL3 ...]` - 打开并提取正文
 
-用 opencli 控制真实 Edge 浏览器，绕过 WAF/反爬。
+支持多个 URL 并行读取和 CloakBrowser 反检测模式。
 
-**雪球用户帖子：**
-```bash
-python scraper.py --backend opencli --fetch xueqiu --user-id 3300065034
+### 深度爬取模式（Crawl4AI）
+
+`python scraper.py --crawl <URL> [URL2 ...]`
+
+基于 Crawl4AI 引擎的深度网页提取：
+- 浏览器渲染：自动处理 JS、异步加载
+- 结构化输出：干净的 Markdown
+- 保存到文件：配合 --output 参数自动保存
+
+示例：
 ```
-遇 WAF 会提示你手动处理验证码，处理后按 Enter 继续。
-
-**B站视频列表：**
-```bash
-python scraper.py --backend opencli --fetch bilibili --mid 473168952
-```
-自动翻页（最多12页），提取全部 BV ID + 标题。
-
-**B站视频按合集分类：**
-```bash
-python scraper.py --backend opencli --fetch bilibili --mid 473168952 --series
-```
-自动遍历全部合集/系列，每个系列内保留顺序，支持翻页（>30集）。
-输出 JSON `bilibili_series_<mid>.json`，结构：
-```
-[{name: "合集·千刀千法", count: 15, url: "...",
-  videos: [{bv: "BV19zkHBWErC", title: "..."}]}]
+python scraper.py --crawl https://example.com
+python scraper.py --crawl https://news.site.com --output ./articles
 ```
 
-**B站全部音频下载：**
-```bash
-python scraper.py --backend opencli --fetch bilibili --mid 473168952 --audio
-```
-用 yt-dlp 并行下载全部视频音频，低质量（~65kbps，讲课足够），标题自动写入文件名。
-文件保存到 `bilibili_audio_<mid>/`。
+注意：部分高强度反爬网站被拦截时，退回到 --backend cloak 或 --backend opencli
 
-**通用页面读取（反爬网站）：**
-```bash
-python scraper.py --backend opencli --read "https://xueqiu.com/u/3300065034"
-```
-遇到 Cloudflare/WAF 自动提示手动处理。
-
-依赖：`npm install -g opencli`（可选），`pip install yt-dlp`（仅音频下载需要）。opencli 未装时友好提示安装方法，不崩溃。
-
-### 🌐 浏览器选择
+## 核心理念## 🌐 浏览器选择
 
 `--browser edge`（默认）用你系统安装的 Edge，隐身效果更好
 `--browser chromium` 用 Playwright 自带的 Chromium
