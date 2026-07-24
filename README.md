@@ -1,77 +1,72 @@
-# 🏆 Super Invincible Search King
+# 🏆 Search King
 
-**超级无敌人机协作万能搜索大王**
-
-> Playwright 驱动的实体浏览器搜索器 — 搜图 · 搜文字 · 读网页。CAPTCHA 自动跳过，引擎链自动回退，真人浏览模式兜底。
+> Playwright 驱动的全能搜索器 — 搜图 · 搜文字 · 读网页 · 深度爬取 · 反爬网站抓取。
+> CAPTCHA 自动跳过，引擎链自动回退，真人浏览模式兜底。
 
 [![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
 [![Playwright](https://img.shields.io/badge/playwright-powered-green.svg)](https://playwright.dev/)
 [![License](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 
-三种模式，一个脚本：
+---
 
-| 模式 | 命令 | 用途 |
+## 正交参数
+
+参数按职责正交组合，互不干扰：
+
+| 维度 | 参数 | 说明 |
 |------|------|------|
-| 🔍 **搜图** | `imgking "猫"` | 12 个图片引擎自动链，免费摄影站优先 |
-| 🔎 **搜文字** | `imgking --search "AI 2026"` | 6 个搜索引擎，标题+链接+摘要 |
-| 📖 **读网页** | `imgking --read https://...` | 打开任意网页提取正文 |
-| 🤝 **手动模式** | `imgking --url https://... --manual` | 你浏览我提取 |
+| 🎯 **行为** | `--search "x"` | 文字搜索 |
+| | `--read URL [URL2 ...]` | 读网页（支持多个并行） |
+| | `--crawl URL [URL2 ...]` | 深度爬取 → Markdown |
+| | `--fetch xueqiu/bilibili` | 特定平台抓取（需 `--backend opencli`） |
+| | `(无，直接输关键词)` | 默认：搜图 |
+| 🧠 **后端** | `--backend edge`（默认） | 系统 Edge 浏览器 |
+| | `--backend chromium` | Playwright 内置 Chromium |
+| | `--backend cloak` | CloakBrowser 反检测（过 Cloudflare） |
+| | `--backend lite` | 纯 HTTP（仅文字搜索） |
+| | `--backend opencli` | 真实 Edge 浏览器（保持会话，抗 WAF） |
+| | `--backend manual` | 你浏览我提取 |
+| ⚙️ **修饰** | `--free` | 仅免费摄影站 |
+| | `--download` / `-d` | 下载图片 |
+| | `--engine` / `-e` | 指定引擎 |
+| | `--limit` / `-n` | 结果数 |
+| | `--output` / `-o` | 输出目录 |
+| | `--show` | 显示浏览器窗口 |
 
-```bash
-# 🔍 搜图 — 免费摄影站 → 通用搜索兜底
-imgking "golden retriever" --free --download -o pics
-
-# 🔎 搜文字 — 6 引擎链
-imgking --search "B站封面设计 高点击" --limit 10
-
-# 📖 读网页 — 正文提取
-imgking --read "https://example.com/article"
-```
+**组合规则：** 行为和后端自由搭配，修饰器全局通用。
 
 ---
 
-## ✨ 能力
+## 用法速查
 
-| 能力 | 说明 |
-|------|------|
-| **搜图引擎** | Unsplash, Pexels, Pixabay, Burst, Bing, Baidu, Google, Yandex, DuckDuckGo, Brave, Sogou, 360 |
-| **文字搜索引擎** | Bing Web, Baidu Web, Google Web, DuckDuckGo Web, Brave Web, Sogou Web |
-| **读网页** | 打开任意 URL 提取正文（标题 + 正文字数 + 内容） |
-| **许可证感知** | 免费摄影站标记 ✅，通用搜索引擎标记 ⚠️ |
-| **来源文档** | `--download` 自动生成 `_sources_{timestamp}.json`，含 URL、引擎、许可证 |
-| **去重** | URL 去重 + 标题相似度过滤 |
-| **并发下载** | 5 线程并行下载 |
-| **自动回退** | CAPTCHA / 被墙 / 403 → 自动跳过换下一个引擎 |
-| **手动模式** | `--manual` 弹浏览器给你操作，按回车后提取 |
+| 你想... | 执行 |
+|--------|------|
+| 🖼️ 搜图 | `python scraper.py "猫"` |
+| 🖼️ 搜图+免费+下载 | `python scraper.py "猫" --free --download -o pics` |
+| 🔎 搜文字 | `python scraper.py --search "AI 2026"` |
+| 🔎 搜文字 + 无浏览器 | `python scraper.py --search "AI" --backend lite` |
+| 🔎 搜文字 + 反检测 | `python scraper.py --search "AI" --backend cloak` |
+| 📖 读网页 | `python scraper.py --read https://example.com` |
+| 📖 读多个网页 | `python scraper.py --read URL1 URL2 URL3` |
+| 📖 反检测读网页 | `python scraper.py --read URL --backend cloak` |
+| 🕷️ 深度爬取 | `python scraper.py --crawl https://example.com` |
+| 🤝 手动模式 | `python scraper.py --read URL --backend manual` |
 
-## 🚀 使用
+### opencli 真实浏览器抓取（抗 WAF）
 
-```bash
-# 搜图（默认）
-imgking "golden retriever"
+| 你想... | 执行 |
+|--------|------|
+| 📱 雪球帖子 | `python scraper.py --backend opencli --fetch xueqiu --user-id 123` |
+| 🎬 B 站视频列表 | `python scraper.py --backend opencli --fetch bilibili --mid 123` |
+| 🎬 B 站合集分类 | `python scraper.py --backend opencli --fetch bilibili --mid 123 --series` |
+| 🎵 B 站音频下载 | `python scraper.py --backend opencli --fetch bilibili --mid 123 --audio` |
+| 📖 绕过 WAF 读网页 | `python scraper.py --backend opencli --read https://example.com` |
 
-# 仅免费摄影站（可商用）
-imgking "golden retriever" --free --download -o photos
+---
 
-# 指定引擎
-imgking "猫" -e unsplash,pixabay
+## 引擎
 
-# 文字搜索
-imgking --search "latest AI news 2026" -n 10
-
-# 读网页
-imgking --read "https://example.com/article"
-
-# 扒任意网页图片
-imgking --url "https://example.com/gallery" --download
-
-# 手动模式
-imgking --url "https://pixiv.net" --manual
-```
-
-## 🔧 引擎
-
-### 图片引擎
+### 图片（12 个）
 
 | Key | 引擎 | 许可证 | 地区 |
 |-----|------|--------|------|
@@ -86,9 +81,9 @@ imgking --url "https://pixiv.net" --manual
 | `yandex` | Yandex Images | ⚠️ 未知 | 🇷🇺 |
 | `sogou` | 搜狗图片 | ⚠️ 未知 | 🇨🇳 |
 | `so360` | 360 图片 | ⚠️ 未知 | 🇨🇳 |
-| `google` | Google Images | ⚠️ 未知 (易拦截) | 🌍 |
+| `google` | Google Images | ⚠️ 未知（易拦截） | 🌍 |
 
-### 文字搜索引擎
+### 文字（6 个）
 
 | Key | 引擎 | URL |
 |-----|------|-----|
@@ -99,51 +94,42 @@ imgking --url "https://pixiv.net" --manual
 | `brave-web` | Brave Search | `search.brave.com` |
 | `sogou-web` | 搜狗搜索 | `sogou.com/web` |
 
-## 📦 安装
+---
 
-### 前置依赖
-- Python 3.8+
-- Playwright + Chromium
-
-```bash
-# 1. 克隆
-git clone https://github.com/fengyuwang-com/Super-Invincible-Search-King.git
-cd Super-Invincible-Search-King
-
-# 2. 安装依赖
-pip install playwright
-playwright install chromium
-
-# 3. 配置 imgking 快捷命令（可选）
-mkdir -p ~/bin
-echo '#!/usr/bin/env bash
-exec python "$(dirname "$0")/../Super-Invincible-Search-King/scraper.py" "$@"' > ~/bin/imgking
-chmod +x ~/bin/imgking
-
-# 4. 试试
-imgking "cat" --free -n 3
-```
-
-> **`~/bin` 不在 PATH 里？** 加 `export PATH="$HOME/bin:$PATH"` 到 `~/.bashrc` 或 `~/.zshrc`。
-
-## ⚙️ 工作流
+## 工作流
 
 ```
 用户输入
-  ├── --read URL → 打开网页 → 提取正文 → 打印
-  ├── --search   → 文字引擎链 → 提取标题+链接+摘要 → 打印
-  └── (默认)     → 图片引擎链 → CAPTCHA? → 跳过 → 下一个
-                                     ↓
-                               搜到图片? → URL去重 → 下载 → 来源文档
+  ├── --read URL → 读网页 → 提取正文
+  ├── --search   → 文字引擎链（全挂→手动模式兜底）
+  ├── --crawl    → Crawl4AI 深度提取 → Markdown
+  ├── --backend opencli → 真实浏览器绕过 WAF
+  └── (默认)     → 图片引擎链 → 去重 → 展示/下载 → 来源文档
 ```
 
-## 🤝 贡献
+全部模式遇到验证码/拦截 → 自动跳过换下一个 → 全挂切手动。
 
-PR 欢迎！方向：
-- 更多免费摄影站
-- AI 去重（CLIP embedding）
-- 结果预览 / GUI 选择器
+---
 
-## 📜 许可证
+## 安装
+
+```bash
+git clone https://github.com/fengyuwang-com/Super-Invincible-Search-King.git
+cd Super-Invincible-Search-King
+
+# 核心依赖（搜图/搜文字/读网页）
+pip install playwright
+playwright install chromium
+
+# 可选扩展
+pip install crawl4ai        # --crawl 深度爬取
+pip install cloakbrowser    # --backend cloak 反检测
+npm install -g opencli      # --backend opencli WAF 绕过
+pip install yt-dlp          # B 站音频下载
+```
+
+---
+
+## 许可证
 
 GNU General Public License v3.0

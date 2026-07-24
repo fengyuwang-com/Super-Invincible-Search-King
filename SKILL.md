@@ -17,103 +17,85 @@ metadata:
   platforms: windows
 ---
 
-# 超级无敌万能搜索大王 — 人机协作全能搜索器
+# 超级万能搜索大王
 
 位置：`C:\FengProj\Search-King\scraper.py`
 
 ## 三种模式
 
-### 🔍 搜图模式（默认）
+### 🔍 搜图（默认）
 
 `python scraper.py "关键词" [选项]`
 
-自动链：`unsplash -> pexels -> pixabay -> burst -> bing -> baidu -> brave -> ddg -> sogou -> so360`
+自动链：`unsplash ➝ pexels ➝ pixabay ➝ burst ➝ bing ➝ baidu ➝ brave ➝ ddg ➝ sogou ➝ so360`
 
 免费摄影站优先（可商用），通用搜索兜底（版权未知）。
 
-### 🔎 文字搜索模式
+### 🔎 文字搜索
 
 `python scraper.py --search "关键词" [选项]`
 
-自动链：`bing-web -> baidu-web -> google-web -> ddg-web -> brave-web -> sogou-web`
+自动链：`bing-web ➝ baidu-web ➝ google-web ➝ ddg-web ➝ brave-web ➝ sogou-web`
 
-**全挂了 → 自动切手动模式**：浏览器保持打开，你自己搜，搜完按 Enter 我提取结果。
+**全挂了 → 自动切手动模式**：浏览器保持打开，用户自己搜，搜完按 Enter 提取结果。
 
-### 📖 读网页模式
+### 📖 读网页
 
-`python scraper.py --read "https://example.com/article"`
+`python scraper.py --read URL [URL2 URL3 ...]`
 
-自动提取正文，显示标题+字数+内容（前200行）。
+支持多个 URL 并行读取、CloakBrowser 反检测模式。
 
-**遇到验证码 → 自动切手动模式**：浏览器保持打开，你处理完验证码后按 Enter，我提取内容。
+**遇到验证码 → 自动切手动模式**：浏览器保持打开，你处理完验证码后按 Enter 提取。
 
-### 📖 读网页模式
+## 可选后端
 
-`python scraper.py --read <URL> [URL2 URL3 ...]` - 打开并提取正文
+| 后端 | 用途 | 依赖 |
+|------|------|------|
+| `--backend edge`（默认） | 系统 Edge，隐身效果更好 |
+| `--backend chromium` | Playwright 内置 Chromium |
+| `--backend cloak` | CloakBrowser 反检测，过 Cloudflare | `pip install cloakbrowser` |
+| `--backend lite` | 纯 HTTP，无浏览器（仅文字搜索） |
+| `--backend opencli` | 真实 Edge 浏览器，抗 WAF | `npm install -g opencli` |
+| `--backend manual` | 你浏览我提取，循环接力 |
 
-支持多个 URL 并行读取和 CloakBrowser 反检测模式。
+## 深度爬取（Crawl4AI）
 
-### 深度爬取模式（Crawl4AI）
+`python scraper.py --crawl URL [URL2 ...]`
 
-`python scraper.py --crawl <URL> [URL2 ...]`
+Crawl4AI 引擎，自动处理 JS 异步加载，输出结构化 Markdown。配合 `--output` 自动保存到文件。
 
-基于 Crawl4AI 引擎的深度网页提取：
-- 浏览器渲染：自动处理 JS、异步加载
-- 结构化输出：干净的 Markdown
-- 保存到文件：配合 --output 参数自动保存
+> 高强度反爬网站被拦截时，退回到 `--backend cloak` 或 `--backend opencli`。
 
-示例：
-```
-python scraper.py --crawl https://example.com
-python scraper.py --crawl https://news.site.com --output ./articles
-```
+## 浏览器选择
 
-注意：部分高强度反爬网站被拦截时，退回到 --backend cloak 或 --backend opencli
-
-## 核心理念## 🌐 浏览器选择
-
-`--browser edge`（默认）用你系统安装的 Edge，隐身效果更好
-`--browser chromium` 用 Playwright 自带的 Chromium
-
-Edge 对百度/搜狗/DuckDuckGo 直接出结果（Google/Brave 仍可能触发验证码）。
-Chromium 是备选，某些时候效果反而更好。
-
-### 🤝 手动模式
-
-`python scraper.py --url "https://example.com" --manual`
-
-你浏览我提取。浏览器弹出来你自己逛，逛完按回车，AI 提取内容。
-
-## 核心理念
-
-人机协作：自动引擎能搞定就自动搞定，搞不定就交给你手动，你搞定了我帮你提取。
+`--backend edge`（默认）对百度/搜狗/DuckDuckGo 直接出结果。  
+`--backend chromium` 是备选，某些场景效果更好。
 
 ## 使用示例
 
 ```bash
-# 搜文字（全引擎链自动，全挂了切手动）
-python C:\FengProj\Search-King\scraper.py --search "中概股 KWEB 2026"
+# 搜文字（全自动，全挂切手动）
+python scraper.py --search "中概股 KWEB 2026"
 
-# 读网页（遇到验证码自动切手动）
-python C:\FengProj\Search-King\scraper.py --read "https://zhuanlan.zhihu.com/p/123"
+# 读网页（遇验证码自动切手动）
+python scraper.py --read "https://zhuanlan.zhihu.com/p/123"
 
 # 搜图 + 下载
-python C:\FengProj\Search-King\scraper.py "风景" --download -o pics
+python scraper.py "风景" --download -o pics
 
 # 手动模式
-python C:\FengProj\Search-King\scraper.py --url "https://example.com" --manual
+python scraper.py --read "https://example.com" --backend manual
 
-# 雪球抓取（opencli 真实浏览器绕过 WAF）
-python C:\FengProj\Search-King\scraper.py --backend opencli --fetch xueqiu --user-id 3300065034
+# CloakBrowser 反检测
+python scraper.py --search "AI" --backend cloak
 
-# B站视频列表抓取
-python C:\FengProj\Search-King\scraper.py --backend opencli --fetch bilibili --mid 473168952
+# 雪球帖子
+python scraper.py --backend opencli --fetch xueqiu --user-id 3300065034
 
-# B站全部音频下载（低质量，讲课足够）
-python C:\FengProj\Search-King\scraper.py --backend opencli --fetch bilibili --mid 473168952 --audio
-
-# B站按合集分类（含全部视频顺序）
-python C:\FengProj\Search-King\scraper.py --backend opencli --fetch bilibili --mid 473168952 --series
+# B站视频 + 音频
+python scraper.py --backend opencli --fetch bilibili --mid 473168952
+python scraper.py --backend opencli --fetch bilibili --mid 473168952 --audio
+python scraper.py --backend opencli --fetch bilibili --mid 473168952 --series
 ```
 
 ## 接力规则
@@ -123,6 +105,6 @@ python C:\FengProj\Search-King\scraper.py --backend opencli --fetch bilibili --m
 | OK 引擎出结果 | 自动提取 | 等结果 |
 | 人机验证/拦截 | 跳过，换下一个引擎 | 等结果 |
 | **所有引擎全挂** | **切手动模式，浏览器保持打开** | **自己搜 → 按 Enter 我提取** |
-| **读网页遇验证码** | **切手动模式，等你处理** | **处理验证码 → 按 Enter 我提取** |
-| 手动模式 (-m) | 等你浏览完按回车 | 自己逛 -> 回车 |
+| **读网页遇验证码** | **切手动模式，等你处理** | **处理验证码 → 按 Enter 提取** |
+| 手动模式 | 等你浏览完按回车 | 自己逛 → 回车 |
 | 下载失败 | 提示防盗链 | 手动打开链接 |
