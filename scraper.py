@@ -1136,8 +1136,9 @@ async def crawl_extract(urls, headless=True, output_dir="."):
                     print(f"{'='*60}", flush=True)
                     for line in md.split('\n')[:150]:
                         print(line, flush=True)
-                    if len(md.split('\n')) > 150:
-                        print(f"\n... (共 {len(md.split('\n'))} 行，仅显示前 150 行)", flush=True)
+                    lines = md.split('\n')
+                    if len(lines) > 150:
+                        print(f"\n... (共 {len(lines)} 行，仅显示前 150 行)", flush=True)
 
                     # Save if output dir specified
                     if output_dir != ".":
