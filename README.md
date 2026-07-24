@@ -6,7 +6,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
 [![Playwright](https://img.shields.io/badge/playwright-powered-green.svg)](https://playwright.dev/)
-[![License](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 
 三种模式，一个脚本：
 
@@ -146,4 +146,4 @@ PR 欢迎！方向：
 
 ## 📜 许可证
 
-MIT
+GNU General Public License v3.0

@@ -1359,6 +1359,10 @@ if __name__ == "__main__":
                         help="B 站用户 mid（配合 --fetch bilibili）")
     parser.add_argument("--audio", action="store_true",
                         help="下载 B 站音频（配合 --fetch bilibili）")
+    parser.add_argument("--series", action="store_true",
+                        help="按合集分类抓取 B 站视频（配合 --fetch bilibili）")
+    parser.add_argument("--quality", default="9",
+                        help="B 站音频质量 0-9，默认 9（约 65kbps，讲课足够）")
     parser.add_argument("--pages", type=int, default=99,
                         help="抓取最大页数（默认 99）")
     args = parser.parse_args()
@@ -1376,16 +1380,33 @@ if __name__ == "__main__":
                 print("❌ 雪球抓取需要 --user-id", flush=True)
                 sys.exit(1)
             posts = opencli_fetch.xueqiu_posts(args.user_id, args.pages)
-            print(f"\n共 {len(posts)} 条帖子", flush=True)
+            print(f"\n📊 共 {len(posts)} 条帖子:", flush=True)
+            print(f"{'='*60}", flush=True)
+            for i, p in enumerate(posts[:20], 1):
+                text = (p.get('text', '') or '')[:200]
+                created = p.get('created_at', '')
+                print(f"\n[{i}] {created}", flush=True)
+                print(f"    {text}", flush=True)
+            if len(posts) > 20:
+                print(f"\n... 还有 {len(posts) - 20} 条", flush=True)
+            # 保存到文件
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            fpath = f"xueqiu_{args.user_id}_{ts}.json"
+            with open(fpath, "w", encoding="utf-8") as f:
+                json.dump(posts, f, ensure_ascii=False, indent=2)
+            print(f"\n💾 已保存: {fpath}", flush=True)
             sys.exit(0)
 
         elif args.fetch == "bilibili":
             if not args.mid:
                 print("❌ B 站抓取需要 --mid", flush=True)
                 sys.exit(1)
-            if args.audio:
-                result = opencli_fetch.bilibili_audio(
-                    args.mid, args.output or ".", args.limit
+            if args.series:
+                series = opencli_fetch.bilibili_series(args.mid)
+                print(f"\n共 {len(series)} 个合集", flush=True)
+            elif args.audio:
+                opencli_fetch.bilibili_audio(
+                    args.mid, args.output or ".", args.quality
                 )
             else:
                 videos = opencli_fetch.bilibili_videos(args.mid)
