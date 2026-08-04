@@ -3,6 +3,8 @@
 > Playwright 驱动的全能搜索器 — 搜图 · 搜文字 · 读网页 · 深度爬取 · 反爬网站抓取。
 > CAPTCHA 自动跳过，引擎链自动回退，真人浏览模式兜底。
 
+> **官网：** https://fengyuwang.com/zh-cn/search-king.html
+
 [![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
 [![Playwright](https://img.shields.io/badge/playwright-powered-green.svg)](https://playwright.dev/)
 [![License](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
