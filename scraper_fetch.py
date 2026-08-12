@@ -30,30 +30,60 @@ def check_ytdlp():
 
 # ── 浏览器控制 ──
 
+def get_profile():
+    """检测已连接的 Browser Bridge 配置文件（多配置时需显式指定，优先 default 标记）"""
+    try:
+        result = subprocess.run("opencli profile list", shell=True, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=10)
+        profiles = []
+        for line in result.stdout.split('\n'):
+            m = re.match(r'\s*([A-Za-z0-9_]+)(?:\s+default)?\s*—\s*connected', line)
+            if m:
+                profiles.append((m.group(1), 'default' in line))
+        if not profiles:
+            return ""
+        # 优先用 opencli profile use 标记为 default 的配置文件
+        for name, is_default in profiles:
+            if is_default:
+                return name
+        return profiles[0][0]
+    except Exception:
+        return ""
+
+
+_PROFILE = get_profile()
+
+
+def _oc(cmd):
+    """opencli 命令包装：多个浏览器配置文件时自动加 --profile"""
+    if _PROFILE:
+        return cmd.replace("opencli ", f"opencli --profile {_PROFILE} ", 1)
+    return cmd
+
+
 def browser_eval(session, js):
     """在 opencli 浏览器中执行 JS，返回 stdout"""
     # 压缩为一行（多行 JS 通过 shell 传给 opencli 会断）
     js = re.sub(r'\s*\n\s*', ' ', js).strip()
-    cmd = f'opencli browser {session} eval {json.dumps(js)}'
+    cmd = _oc(f'opencli browser {session} eval {json.dumps(js)}')
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30)
     return result.stdout
 
 
 def browser_nav(session, url):
     """让 opencli 浏览器导航到 URL"""
-    cmd = f'opencli browser {session} open {json.dumps(url)}'
+    cmd = _oc(f'opencli browser {session} open {json.dumps(url)}')
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=15)
     return result.returncode == 0
 
 
 def get_session(session="king_fetch"):
-    """获取现有 opencli 浏览器会话，没有则创建"""
-    cmd = f'opencli browser {session} eval "location.href"'
+    """获取现有 opencli 浏览器会话，没有则创建（bind 当前标签页到会话）"""
+    cmd = _oc(f'opencli browser {session} eval "location.href"')
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=10)
     if result.returncode == 0 and result.stdout.strip():
         return session
-    # 会话不存在，尝试创建（通过 open --new）
-    cmd = f'opencli browser --new {session} 2>&1'
+    # 会话不存在，尝试创建（opencli v1.8+: bind 当前浏览器标签页）
+    cmd = _oc(f'opencli browser {session} bind 2>&1')
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=15)
     if result.returncode == 0:
         return session

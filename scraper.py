@@ -1421,7 +1421,11 @@ if __name__ == "__main__":
 
         elif args.read:
             for url in args.read:
-                scroll = input(f"是否滚动页面 {url}? (y/N): ").strip().lower() == 'y'
+                # 非交互环境（AI agent 调用）自动默认不滚动，避免 input() 抛 EOFError
+                if sys.stdin.isatty():
+                    scroll = input(f"是否滚动页面 {url}? (y/N): ").strip().lower() == 'y'
+                else:
+                    scroll = False
                 result = opencli_fetch.read_page(url, scroll=scroll)
                 if result:
                     if result.get('blocked'):
