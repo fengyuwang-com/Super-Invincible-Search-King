@@ -305,13 +305,13 @@ TEXT_ENGINES = {
     },
     "ddg-web": {
         "name": "DuckDuckGo",
-        "url": "https://duckduckgo.com/?q={q}&ia=web",
+        "url": "https://html.duckduckgo.com/html/?q={q}",
         "extract": """
             (() => {
                 const r = [];
-                document.querySelectorAll('article[data-testid="result"]').forEach(el => {
-                    const link = el.querySelector('a[data-testid="result-title-a"]');
-                    const snippet = el.querySelector('[data-testid="result-snippet"]');
+                document.querySelectorAll('.result').forEach(el => {
+                    const link = el.querySelector('a.result__a');
+                    const snippet = el.querySelector('.result__snippet');
                     if (link) r.push({
                         title: (link.innerText || '').trim(),
                         url: link.href || '',
@@ -363,7 +363,13 @@ TEXT_ENGINES = {
 }
 
 # 默认文字搜索链
-TEXT_FALLBACK_CHAIN = ["bing-web", "baidu-web", "google-web", "ddg-web", "brave-web", "sogou-web"]
+# 2026-08-05 实测: brave-web 快且稳(默认主力); ddg-web 能用但慢(~50s);
+# bing-web/google-web 在无头下会卡死(>90s); baidu/sogou 秒回但常遇验证码。
+# 慢引擎一律不进默认链; 需要时用 -e ddg-web 等手动指定。
+# 每个引擎另有独立超时 TEXT_SEARCH_TIMEOUT, 防止单引擎拖死整轮搜索。
+TEXT_FALLBACK_CHAIN = ["ddg-web", "sogou-web", "brave-web", "baidu-web"]
+TEXT_SEARCH_TIMEOUT = 60  # 单个文字引擎最长等待(秒), 超时自动放弃(ddg 约50s需留余量)
+TIMEOUT_SENTINEL = object()  # 引擎超时哨兵(区别于"无结果")
 
 
 def detect_captcha(text):
@@ -396,7 +402,11 @@ def detect_blocked(text):
 
 
 async def wait_for_user_input(page, prompt_msg, check_closed=True):
-    """等待用户操作（Windows 兼容）。返回 False 表示浏览器已关闭。"""
+    """等待用户操作（Windows 兼容）。返回 False 表示浏览器已关闭或应退出手动模式。
+    非交互环境（管道/重定向/CI，stdin 为 EOF）下直接跳过，防止无限空转刷屏。"""
+    if not sys.stdin.isatty():
+        print("   ⏭️ 非交互环境（stdin 非终端），跳过手动模式", flush=True)
+        return False
     print(f"\n🟡 {prompt_msg}", flush=True)
     print("   操作完成后在终端按 Enter 继续...", flush=True)
     loop = asyncio.get_event_loop()
@@ -414,6 +424,13 @@ async def wait_for_user_input(page, prompt_msg, check_closed=True):
             [loop.run_in_executor(None, sys.stdin.readline)],
             timeout=0.5
         )
+        if pending:
+            for t in pending:
+                t.cancel()  # 清理未完成的等待任务, 防止线程池堆积
+            try:
+                await asyncio.gather(*pending, return_exceptions=True)  # 收敛已取消任务, 消除 "exception was never retrieved"
+            except Exception:
+                pass
         if done:
             return True
 
@@ -565,6 +582,27 @@ async def try_engine(page, eng, query, min_size, max_count):
         print("   ⚠️ 引擎提取没拿到，尝试通用方法...", flush=True)
         images = await extract_images(page, min_size, max_count)
 
+    # 引擎专用提取没带宽高的，补一次尺寸探测：优先读页面里已加载 img 的 naturalWidth，取不到再用 new Image 拉一次
+    if images and not images[0].get("w"):
+        try:
+            sizes = await page.evaluate("""(urls) => Promise.all(urls.map(u => new Promise(res => {
+                const el = [...document.images].find(i => (i.src || i.getAttribute('data-src') || '') === u);
+                if (el && el.naturalWidth) { res({url: u, w: el.naturalWidth, h: el.naturalHeight}); return; }
+                const im = new Image();
+                const done = v => res({url: u, w: v ? im.naturalWidth : 0, h: v ? im.naturalHeight : 0});
+                im.onload = () => done(true);
+                im.onerror = () => done(false);
+                setTimeout(() => done(false), 5000);
+                im.src = u;
+            })))""", [img["url"] for img in images])
+            smap = {s["url"]: s for s in sizes}
+            for img in images:
+                s = smap.get(img["url"])
+                if s and s["w"]:
+                    img["w"], img["h"] = s["w"], s["h"]
+        except Exception as e:
+            print(f"   ⚠️ 尺寸探测失败: {str(e)[:50]}", flush=True)
+
     # 给每张图打上来源标记
     for img in images:
         img["_engine"] = eng
@@ -598,6 +636,14 @@ async def try_text_engine(page, eng, query, max_count):
 
     # 引擎专用提取
     results = await page.evaluate(info["extract"])
+
+    # DDG 的链接是 duckduckgo.com/l/?uddg= 跳转，解码回真实 URL
+    for r in (results or []):
+        u = r.get("url", "")
+        if "duckduckgo.com/l/" in u:
+            m = urllib.parse.parse_qs(urllib.parse.urlparse(u).query).get("uddg")
+            if m:
+                r["url"] = m[0]
 
     # 没出结果？走通用兜底
     if not results:
@@ -781,13 +827,43 @@ async def run(query=None, engines=None, url=None, max_count=5,
             tasks = [search_one_text(context, eng, query, max_count) for eng in text_engines]
             gathered = await asyncio.gather(*tasks)
 
-            for eng, result in gathered:
-                name = TEXT_ENGINES[eng]['name']
-                if result:
-                    all_results.extend(result)
-                    print(f"\n✅ [{name}] {len(result)} 条结果", flush=True)
-                else:
-                    print(f"   ❌ [{name}] 无结果", flush=True)
+            # 并发发起所有引擎, 谁先出结果谁先得; 出够结果就提前收网, 不等慢引擎
+            pending = {asyncio.ensure_future(run_with_timeout(eng, TEXT_SEARCH_TIMEOUT))
+                       for eng in text_engines}
+            done = set()
+            reported = set()
+            while pending:
+                # 等最早返回的那一个
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for fut in done:
+                    # 被我们主动取消的引擎, result 会是 CancelledError, 直接跳过
+                    if fut.cancelled():
+                        continue
+                    eng, result = fut.result()
+                    reported.add(eng)
+                    if result is TIMEOUT_SENTINEL:
+                        print(f"   ⏱️ [{TEXT_ENGINES[eng]['name']}] 超时放弃", flush=True)
+                    elif not result:
+                        print(f"   ❌ [{TEXT_ENGINES[eng]['name']}] 无结果", flush=True)
+                    else:
+                        all_results.extend(result)
+                        print(f"\n✅ [{TEXT_ENGINES[eng]['name']}] {len(result)} 条结果", flush=True)
+                # 已拿到足够结果 → 提前收网, 取消还在跑的引擎
+                if len(all_results) >= max_count and pending:
+                    for fut in pending:
+                        fut.cancel()
+                    try:
+                        await asyncio.gather(*pending, return_exceptions=True)  # 收敛已取消任务, 消除 ERR_ABORTED 刷屏
+                    except Exception:
+                        pass
+                    print(f"   ⏭️ 已拿到 {len(all_results)} 条(≥{max_count}), 提前结束, 跳过 {len(pending)} 个未完成引擎", flush=True)
+                    pending = set()
+                    break
+                # 记下已处理过的引擎, 凡是被取消的会在 reported 缺失时于下方统一提示
+            # 从未完成/被取消的引擎, 记一个超时
+            for eng in text_engines:
+                if eng not in reported:
+                    print(f"   ⏱️ [{TEXT_ENGINES[eng]['name']}] 取消/未完成", flush=True)
 
             # 所有引擎全挂了 → 手动模式兜底
             if not all_results:
@@ -822,7 +898,7 @@ async def run(query=None, engines=None, url=None, max_count=5,
                 print(f"{'='*60}", flush=True)
 
             await browser.close()
-            return
+            return deduped[:max_count]
 
         # ----- 图片搜索模式（默认）-----
         # [原有逻辑保持不变]
@@ -1034,6 +1110,358 @@ def ddg_lite_search(query, limit=10):
             "engine": "DDG Lite",
         })
     return results
+
+
+def baidu_lite_search(query, limit=10):
+    """纯HTTP搜索百度简单HTML版（中文查询 lite 直连主力）"""
+    url = "https://www.baidu.com/s?wd=" + urllib.parse.quote(query) + "&rn=" + str(min(max(limit, 10), 20))
+    # 完整 cookie 组 + Referer，否则百度直接弹"百度安全验证"页
+    bid = hashlib.md5((query + str(time.time())).encode("utf-8")).hexdigest()
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+        "Referer": "https://www.baidu.com/",
+        "Cookie": (
+            f"BAIDUID={bid}:FG=1; BIDUPSID={bid}; PSTM={int(time.time())}; "
+            "BD_CK_SAM=1; PSINO=1; delPer=0; HMACS=1"
+        ),
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            html = resp.read().decode("utf-8", errors="replace")
+    except Exception as e:
+        print(f"  ❌ Baidu Lite: {e}")
+        return []
+    # 每个结果块: <h3 ...><a href="..." ...>标题</a></h3>（百度返回 /link?url= 跳转链）
+    items = re.findall(r'<h3[^>]*>\s*<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', html, re.DOTALL)
+    results = []
+    for href, title in items[:limit]:
+        title = re.sub(r"<[^>]+>", "", title).strip()
+        if not title or not href:
+            continue
+        if href.startswith("/link?url="):
+            href = "https://www.baidu.com" + href
+        results.append({
+            "title": title,
+            "url": href,
+            "snippet": "",
+            "engine": "Baidu Lite",
+        })
+    return results
+
+
+def _tinyfish_api_key():
+    """TinyFish key：优先环境变量，其次 tinyfish CLI 配置 ~/.tinyfish/config.json"""
+    key = os.environ.get("TINYFISH_API_KEY")
+    if key:
+        return key
+    try:
+        cfg = os.path.join(os.path.expanduser("~"), ".tinyfish", "config.json")
+        with open(cfg, "r", encoding="utf-8") as f:
+            return (json.load(f) or {}).get("api_key") or ""
+    except Exception:
+        return ""
+
+
+def tinyfish_search(query, limit=10):
+    """TinyFish Search API（key 从环境变量或 tinyfish CLI 配置读取，不可用时静默返回空）"""
+    key = _tinyfish_api_key()
+    if not key:
+        print("  ⚠️ TinyFish: 未找到 API key（TINYFISH_API_KEY / ~/.tinyfish/config.json），跳过", flush=True)
+        return []
+    url = "https://api.search.tinyfish.ai?query=" + urllib.parse.quote(query)
+    req = urllib.request.Request(url, headers={
+        "X-API-Key": key,
+        "Accept": "application/json",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+    except Exception as e:
+        print(f"  ❌ TinyFish: {str(e)[:60]}", flush=True)
+        return []
+    results = []
+    for r in (data.get("results") or [])[:limit]:
+        results.append({
+            "title": r.get("title", ""),
+            "url": r.get("url", ""),
+            "snippet": r.get("snippet", ""),
+            "engine": "TinyFish",
+        })
+    return results
+
+
+_searxng_app = None  # lazy-init Flask app for in-process search
+
+def _find_searxng_src():
+    """自动发现 SearXNG 源码目录：优先环境变量 SEARXNG_SRC，
+    其次项目父目录下的 searxng-src（兄弟目录），最后 ~/.searxng-src。"""
+    env = os.environ.get("SEARXNG_SRC")
+    if env and os.path.isdir(env):
+        return env
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    sibling = os.path.join(os.path.dirname(project_root), "searxng-src")
+    if os.path.isdir(sibling):
+        return sibling
+    home_src = os.path.join(os.path.expanduser("~"), "searxng-src")
+    if os.path.isdir(home_src):
+        return home_src
+    return None
+
+def _find_searxng_settings(searxng_src):
+    """在 SearXNG 源码目录下查找 settings 配置目录。"""
+    for name in ("searxng-settings", "searxng/settings"):
+        p = os.path.join(searxng_src, name)
+        if os.path.isdir(p):
+            return p
+    return None
+
+def searxng_search(query, limit=10):
+    """本机 SearXNG 元搜索（in-process Flask test_client，无需启动 HTTP 服务。
+    依赖：SearXNG 源码在 SEARXNG_SRC 环境变量或项目兄弟目录 searxng-src。
+    未安装或初始化失败时静默返回空。"""
+    global _searxng_app
+    if _searxng_app is None:
+        try:
+            searxng_src = _find_searxng_src()
+            if not searxng_src:
+                _searxng_app = False
+                return []
+            if searxng_src not in sys.path:
+                sys.path.insert(0, searxng_src)
+            settings_dir = _find_searxng_settings(searxng_src)
+            if settings_dir:
+                os.environ.setdefault("SEARXNG_SETTINGS_PATH", settings_dir)
+            import searx as _searx
+            _searx.init_settings()
+            from searx.webapp import app as _app
+            _searxng_app = _app
+        except Exception:
+            _searxng_app = False  # mark as failed, don't retry
+            return []
+    if not _searxng_app:
+        return []
+    try:
+        with _searxng_app.test_client() as client:
+            resp = client.get("/search?q=" + urllib.parse.quote(query)
+                              + "&format=json")
+            if resp.status_code != 200:
+                return []
+            data = json.loads(resp.data)
+    except Exception:
+        return []
+    results = []
+    for r in (data.get("results") or [])[:limit]:
+        results.append({
+            "title": r.get("title", ""),
+            "url": r.get("url", ""),
+            "snippet": r.get("content", ""),
+            "engine": "SearXNG/" + (r.get("engine", "") or "meta"),
+        })
+    return results
+
+
+# 聚合页/噪声域：结果 URL 命中即丢弃
+_NOISE_URL_PAT = re.compile(
+    r"(?:^|\.)image\.baidu\.com$|(?:^|\.)baijiahao\.baidu\.com$"
+    r"|(?:^|\.)m\.baidu\.com$|(?:^|\.)b2b\.baidu\.com$"
+)
+
+
+def _is_noise_url(url):
+    try:
+        host = urllib.parse.urlsplit(url or "").netloc.lower()
+    except Exception:
+        return False
+    return bool(_NOISE_URL_PAT.search(host))
+
+
+def _norm_url_key(url):
+    """URL 归一去重键：域名(去www) + 路径"""
+    try:
+        pu = urllib.parse.urlsplit(url or "")
+        host = pu.netloc.lower()
+        if host.startswith("www."):
+            host = host[4:]
+        return host + pu.path.rstrip("/")
+    except Exception:
+        return url or ""
+
+
+def full_auto_text_search(query, limit, headless=True):
+    """AI 裸调默认流水线（--search 且未显式指定 -e 时）：
+    ① 多源并发直连(baidu+ddg+tinyfish+searxng) → ② 浏览器引擎链 → ③ cloak 兜底 → ④ tinyfish → ⑤ 手动(仅交互终端)
+    总时长护栏 ~120s，超时直接返回已合并结果。"""
+    deadline = time.monotonic() + 120
+    merged = []
+    seen = set()
+
+    def merge(results):
+        added = 0
+        for r in results or []:
+            key = _norm_url_key(r.get("url", ""))
+            if key and key not in seen:
+                seen.add(key)
+                merged.append(r)
+                added += 1
+        return added
+
+    def show(tag):
+        if not merged:
+            print("❌ 无结果", flush=True)
+            return
+        print(f"\n{'='*60}", flush=True)
+        print(f"📎 共 {len(merged)} 条结果（{tag}）", flush=True)
+        print(f"{'='*60}", flush=True)
+        for i, r in enumerate(merged[:limit], 1):
+            print(f"\n[{i}] {r.get('title', '')}", flush=True)
+            print(f"    🔗 {r.get('url', '')}", flush=True)
+            if r.get('snippet'):
+                print(f"    💬 {r['snippet'][:200]}", flush=True)
+
+    def time_left():
+        return deadline - time.monotonic()
+
+    # ── 第 1 跳: 多源并发直连（baidu_lite+ddg_lite+tinyfish+searxng，都等齐合并）──
+    print(f"① 多源直连: {' + '.join(n for n, _ in MULTI_SOURCE_ENGINES)} 并发（目标 {limit} 条）...", flush=True)
+    try:
+        ms_results, ms_counts = multi_source_search(query, limit, verbose=False)
+    except Exception as e:
+        ms_results, ms_counts = [], {}
+        print(f"   ❌ 多源直连异常: {str(e)[:60]}", flush=True)
+    for name, _ in MULTI_SOURCE_ENGINES:
+        if ms_counts.get(name):
+            print(f"   ✅ [{name}] {ms_counts[name]} 条", flush=True)
+    merge(ms_results)
+    if len(merged) >= limit:
+        show("多源直连")
+        return
+    if merged:
+        print(f"   ⚠️ 多源直连不足（{len(merged)} 条），继续降级", flush=True)
+
+    # ── 第 2 跳: 浏览器引擎链（原 edge 路径）──
+    if time_left() <= 5:
+        show("超时护栏提前返回")
+        return
+    print(f"② 浏览器链: {','.join(TEXT_FALLBACK_CHAIN)} ...", flush=True)
+    try:
+        browser_results = asyncio.run(run(
+            query=query, engines=TEXT_FALLBACK_CHAIN, max_count=limit,
+            search=True, browser_choice="edge", headless=headless))
+        merge(browser_results)
+    except Exception as e:
+        print(f"   ❌ 浏览器链异常: {str(e)[:80]}", flush=True)
+    if len(merged) >= limit:
+        show("浏览器链")
+        return
+
+    # ── 第 3 跳: cloak 兜底 ──
+    if _CLOAK_AVAILABLE and time_left() > 5:
+        print(f"③ 浏览器链不足（共 {len(merged)} 条），启动 cloak 兜底...", flush=True)
+        try:
+            merge(cloak_text_search(query, limit, headless=headless))
+        except Exception as e:
+            print(f"   ❌ cloak 异常: {str(e)[:80]}", flush=True)
+        if len(merged) >= limit:
+            show("cloak 兜底")
+            return
+    else:
+        print("③ cloak 未安装或超时将到，跳过 cloak 兜底", flush=True)
+
+    # ── 第 4 跳: tinyfish API ──
+    if _tinyfish_api_key() and time_left() > 5:
+        print(f"④ 仍不足（共 {len(merged)} 条），尝试 TinyFish API...", flush=True)
+        try:
+            merge(tinyfish_search(query, limit))
+        except Exception as e:
+            print(f"   ❌ TinyFish 异常: {str(e)[:60]}", flush=True)
+        if len(merged) >= limit:
+            show("TinyFish")
+            return
+    else:
+        print("④ 未设置 TINYFISH_API_KEY，跳过 TinyFish", flush=True)
+
+    # ── 第 5 跳: 手动模式（仅交互终端；浏览器链内部 zero 结果时已内置该兜底，
+    #    wait_for_user_input 对非 tty 自动跳过，故这里无需重复实现）──
+    if not merged and sys.stdin.isatty():
+        print("⑤ 全链路无结果，可在终端交互环境用 --manual 重试", flush=True)
+
+    show("全自动流水线")
+
+
+# 默认多源清单（全语言同套源；searxng/tinyfish 不可用时各自静默缺席）
+MULTI_SOURCE_ENGINES = [
+    ("baidu", baidu_lite_search),
+    ("ddg", ddg_lite_search),
+    ("tinyfish", tinyfish_search),
+    ("searxng", searxng_search),
+]
+
+
+def multi_source_search(query, limit, timeout=35, verbose=True):
+    """多源并发都等齐后合并去重，返回 (merged_results, counts)。
+    单源失败不影响其他源；全空返回空列表由上层处理。"""
+    merged = []
+    seen = set()
+    counts = {}
+
+    def merge(results):
+        added = 0
+        for r in results or []:
+            u = r.get("url", "")
+            if _is_noise_url(u):
+                continue
+            key = _norm_url_key(u)
+            if key and key not in seen:
+                seen.add(key)
+                merged.append(r)
+                added += 1
+        return added
+
+    engines = MULTI_SOURCE_ENGINES
+    all_results = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(engines)) as ex:
+        futs = {ex.submit(fn, query, limit): name for name, fn in engines}
+        try:
+            for fut in concurrent.futures.as_completed(futs, timeout=timeout):
+                name = futs[fut]
+                try:
+                    rs = fut.result()
+                    all_results[name] = rs
+                    counts[name] = len(rs)
+                except Exception as e:
+                    counts[name] = 0
+                    if verbose:
+                        print(f"   ❌ [{name}] {str(e)[:60]}", flush=True)
+        except concurrent.futures.TimeoutError:
+            for fut in futs:
+                fut.cancel()
+    for name, _ in engines:
+        rs = all_results.get(name)
+        if rs:
+            merge(rs)
+    if verbose:
+        parts = "、".join(f"{n} {counts[n]}" for n, _ in engines if counts.get(n))
+        print(f"🔍 {len(engines)}源合并: 共{len(merged)}条（{parts}）", flush=True)
+    return merged, counts
+
+
+def simple_dual_source_search(query, limit):
+    """默认简单搜索（--search 且未显式 -e、无 --deep 时）：多源并发合并。
+    源 = baidu_lite + ddg_lite + tinyfish（tinyfish 不可用时静默缺席）。"""
+    merged, counts = multi_source_search(query, limit)
+    if not merged:
+        print("❌ 无结果", flush=True)
+        return
+    print(f"\n{'='*60}", flush=True)
+    print(f"📎 共 {len(merged)} 条结果", flush=True)
+    print(f"{'='*60}", flush=True)
+    for i, r in enumerate(merged[:limit], 1):
+        print(f"\n[{i}] {r.get('title', '')}", flush=True)
+        print(f"    🔗 {r.get('url', '')}", flush=True)
+        if r.get('snippet'):
+            print(f"    💬 {r['snippet'][:200]}", flush=True)
 
 
 async def read_multiple_pages(urls, browser_choice="edge", timeout=60, headless=True):
@@ -1291,7 +1719,8 @@ def cloak_text_search(query, limit=10, headless=True):
     for name, url, js_code in engines:
         try:
             print(f"  🔍 {name}...", flush=True)
-            page.goto(url, timeout=30000, wait_until="domcontentloaded")
+            # wait_until="load"：规避 cloakbrowser 0.4.10 下 Bing 触发 context destroyed 的问题
+            page.goto(url, timeout=30000, wait_until="load")
             page.wait_for_timeout(2000)
             results = page.evaluate(js_code)
             for r in results:
@@ -1344,7 +1773,10 @@ if __name__ == "__main__":
     parser.add_argument("--download", "-d", action="store_true", help="下载图片")
     parser.add_argument("--output", "-o", default=".", help="下载目录")
     parser.add_argument("--limit", "-n", type=int, default=5, help="最大结果数")
+    parser.add_argument("--timeout", type=int, default=30, help="网页打开超时秒数（--read 模式，默认 30）")
     parser.add_argument("--min-size", type=int, default=100, help="最小图片宽度（仅搜图模式）")
+    parser.add_argument("--deep", action="store_true",
+                        help="增强模式：多级降级流水线（lite→浏览器链→cloak→tinyfish→手动）")
     parser.add_argument("--backend", default="edge",
                         choices=["edge", "chromium", "lite", "cloak", "manual", "opencli"],
                         help="后端: edge(默认)/chromium=Playwright, lite=纯HTTP, cloak=反检测, manual=手动浏览, opencli=系统Edge浏览器(可保持会话)")
@@ -1450,7 +1882,7 @@ if __name__ == "__main__":
             print("❌ --backend cloak 需要 --search 关键词 或 --read URL", flush=True)
             sys.exit(1)
         if args.read:
-            cloak_read_pages(args.read, args.limit, headless=headless)
+            cloak_read_pages(args.read, timeout=args.timeout, headless=headless)
         elif args.search:
             cloak_text_search(args.query, args.limit, headless=headless)
         sys.exit(0)
@@ -1480,7 +1912,7 @@ if __name__ == "__main__":
                 browser_choice=bc, headless=headless,
             ))
         else:
-            asyncio.run(read_multiple_pages(args.read, bc, args.limit, headless=headless))
+            asyncio.run(read_multiple_pages(args.read, bc, timeout=args.timeout, headless=headless))
         sys.exit(0)
 
     # ── 文字搜索模式 ──
@@ -1501,6 +1933,15 @@ if __name__ == "__main__":
                         print(f"    💬 {r['snippet'][:200]}", flush=True)
             else:
                 print("❌ 无结果", flush=True)
+            sys.exit(0)
+        if args.backend == "edge" and not args.engine:
+            if args.deep:
+                # 增强模式：多级降级链 lite 直连 → 浏览器链 → cloak → tinyfish → 手动
+                print("🚀 [增强模式] 降级流水线启动", flush=True)
+                full_auto_text_search(args.query, args.limit, headless=headless)
+            else:
+                # 默认：简单双源合并
+                simple_dual_source_search(args.query, args.limit)
             sys.exit(0)
         text_engines = [e.strip() for e in args.engine.split(",") if e.strip()] if args.engine else TEXT_FALLBACK_CHAIN
         bc = args.backend if args.backend in ("edge", "chromium") else "edge"

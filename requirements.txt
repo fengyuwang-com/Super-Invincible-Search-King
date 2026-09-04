@@ -2,3 +2,5 @@ playwright>=1.40
 crawl4ai>=0.5.0
 cloakbrowser>=0.4.0
 yt-dlp>=2023.0
+searxng>=2024.0
+waitress>=2.0.0

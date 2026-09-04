@@ -1,0 +1,13 @@
+# SearXNG settings for Windows standalone mode
+# NOTE: scraper.py 默认使用 in-process test_client，不需要启动 HTTP 服务。
+# 此文件仅供 start_searxng.bat 或手动启动时使用。
+use_default_settings: true
+server:
+  secret_key: "set-via-SEARXNG_SECRET_KEY-env"
+  bind_address: "127.0.0.1"
+  port: 8899
+  public_instance: false
+search:
+  formats:
+    - html
+    - json

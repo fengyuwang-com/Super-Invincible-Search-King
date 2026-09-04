@@ -1,6 +1,31 @@
 __pycache__/
 *.pyc
+*.pyo
 node_modules/
 .env
 server.log
 examples/
+
+# Debug / temp files
+*_debug*.txt
+*_debug*.log
+accept_log.txt
+opencli_debug*.txt
+opencli_js_debug.txt
+
+# Bilibili temp data
+bilibili_*.json
+bilibili_*.html
+bilibili_*.txt
+
+# Series temp data
+series_*.json
+series_*.txt
+series_*.html
+
+# Other temp
+scripts.json
+
+# OS
+.DS_Store
+Thumbs.db
