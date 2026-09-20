@@ -44,7 +44,7 @@
 - [ ] baidu_lite 当前被"百度安全验证"整页拦截（2026-08-29 下午复测：补 cookie 组也 0 条），多源合并下静默缺席不影响其他源；后续可试 Patchright 救百度
 
 ### 去除 Docker 依赖（2026-08-29 用户要求）
-- [x] SearXNG 原生 Python 运行替代 Docker：从 ghfast.top 镜像 clone searxng 源码到 C:\FengProj\searxng-src，`pip install --no-build-isolation -e .`（清华 TUNA）；修 searx/valkeydb.py 的 Unix-only `import pwd`（Windows 兼容补丁）；PyPI 上的 "searxng" 包是假货(MCP wrapper)勿装。启动：start_searxng.bat（SEARXNG_SETTINGS_PATH=searxng/settings-win.yml，127.0.0.1:8899）。Docker 容器 searxng 已 `docker rm -f`。验收：中文/英文多源合并 4源（searxng 5条，bing+google cse+qwant）、-e sogou-web 不变、无 searxng 容器（2026-08-29）
+- [x] SearXNG 原生 Python 运行替代 Docker：从 ghfast.top 镜像 clone searxng 源码到 C:\Projects\searxng-src，`pip install --no-build-isolation -e .`（清华 TUNA）；修 searx/valkeydb.py 的 Unix-only `import pwd`（Windows 兼容补丁）；PyPI 上的 "searxng" 包是假货(MCP wrapper)勿装。启动：start_searxng.bat（SEARXNG_SETTINGS_PATH=searxng/settings-win.yml，127.0.0.1:8899）。Docker 容器 searxng 已 `docker rm -f`。验收：中文/英文多源合并 4源（searxng 5条，bing+google cse+qwant）、-e sogou-web 不变、无 searxng 容器（2026-08-29）
 - [x] SearXNG 改为 in-process 集成（2026-09-04）：Flask HTTP server 在 Windows 返回 500（middleware 链问题），改用 `app.test_client().get()` 直接调用，无需启动 HTTP 服务；配置 `searxng-settings/settings.yml`（`use_default_settings: true` + formats json）；searxng_search() lazy-init + sys.path.insert；实测 Google CSE 出结果，4源合并 16 条去重
 - [x] 清理硬编码路径：scraper.py 用 `os.path` 相对推导 searxng-src（优先 SEARXNG_SRC 环境变量 → 兄弟目录 → ~/searxng-src）；start_searxng.bat 用 `%~dp0`；searxng settings 去掉硬编码 secret_key（2026-09-04）
 - [x] 清理项目文件夹：删除 bilibili/series/opencli 临时文件；.gitignore 补全 temp/debug 模式（2026-09-04）

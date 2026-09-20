@@ -147,13 +147,18 @@
 
 ## 2026-08-29 18:35 — 去 Docker 化（子 Agent 执行）
 - 用户要求: 默认搜索去掉 Docker 依赖（SearXNG 原生跑）
-- AI 行动: PyPI searxng 是假包→从 ghfast clone 官方源码到 C:\FengProj\searxng-src，pip --no-build-isolation -e 装上（需先装 msgspec）；修 searx/valkeydb.py 的 Unix-only import pwd；先 docker rm -f searxng（注意 docker context 是 desktop-linux，DOCKER_HOST 被 podman 管道占用）再腾出 8899；SEARXNG_SETTINGS_PATH=settings-win.yml + python -m searx.webapp 启动成功，bing/google cse/qwant 出结果
+- AI 行动: PyPI searxng 是假包→从 ghfast clone 官方源码到 C:\Projects\searxng-src，pip --no-build-isolation -e 装上（需先装 msgspec）；修 searx/valkeydb.py 的 Unix-only import pwd；先 docker rm -f searxng（注意 docker context 是 desktop-linux，DOCKER_HOST 被 podman 管道占用）再腾出 8899；SEARXNG_SETTINGS_PATH=settings-win.yml + python -m searx.webapp 启动成功，bing/google cse/qwant 出结果
 - 产出: start_searxng.bat（日常启动入口）；scraper.py :1206 注释去 Docker 化；todo.md/FENGMEM.md 已记录
 - 关键决策: 走路线1（原生 Python）成功，未砍源未加替代引擎；未 commit
 
 ## 2026-09-04 18:35 — 第 21 轮 (SearXNG in-process 集成)
 - 用户要求: SearXNG 不用 Docker，要能作为默认搜索源之一
-- AI 行动: SearXNG Flask HTTP server 在 Windows 上返回 500（middleware 链问题，test_client 正常但 real server 不行）；改用 in-process Flask test_client 方式——`searxng_search()` 直接调用 `app.test_client().get()` 无需启动 HTTP 服务；重写 `searxng_search()` 加 lazy-init + `sys.path.insert` searxng-src；配置 `C:\FengProj\searxng-src\searxng-settings\settings.yml`（`use_default_settings: true` + formats json + port 8899）；将 `("searxng", searxng_search)` 加回 `MULTI_SOURCE_ENGINES`
+- AI 行动: SearXNG Flask HTTP server 在 Windows 上返回 500（middleware 链问题，test_client 正常但 real server 不行）；改用 in-process Flask test_client 方式——`searxng_search()` 直接调用 `app.test_client().get()` 无需启动 HTTP 服务；重写 `searxng_search()` 加 lazy-init + `sys.path.insert` searxng-src；配置 `C:\Projects\searxng-src\searxng-settings\settings.yml`（`use_default_settings: true` + formats json + port 8899）；将 `("searxng", searxng_search)` 加回 `MULTI_SOURCE_ENGINES`
 - 产出: 默认搜索 4 源合并（baidu+ddg+tinyfish+searxng），实测 16 条去重结果；Google CSE 引入权威来源；`--backend lite` 降级链正常
 - 关键决策: 不用 HTTP server 而用 test_client 绕过 Windows middleware 500；searxng 作为第 4 源静默缺席机制不变
 - 未 commit
+
+## 2026-09-05 23:40 — FengMedia 视频配图实战回写
+- 用户要求: Search King 连接的免费图源（Unsplash 等）要利用起来；找图功夫了得了就把 Search King 更新一下
+- AI 行动: 实测 `scraper.py "清明上河图 painting" --free -n 5`（Unsplash 16/Pixabay 118/Burst 1 张，Pexels 无 key 不出图）→ 实战用法写进本 SKILL.md「自媒体素材搜罗」节 + FengMedia docs/05-工具链/01-工具清单.md
+- 关键决策: `--free --download --min-size` 是视频配图标准命令；素材优先级=开源>公域>人类>AI
