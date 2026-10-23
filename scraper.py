@@ -1222,6 +1222,16 @@ def searxng_search(query, limit=10):
     依赖：SearXNG 源码在 SEARXNG_SRC 环境变量或项目兄弟目录 searxng-src。
     未安装或初始化失败时静默返回空。"""
     global _searxng_app
+    try:  # 先压日志再 import：searx/curl_cffi 在初始化时就会刷屏；搜索要的是答案不是报错
+        import logging as _logging
+        _logging.getLogger("searx").setLevel(_logging.CRITICAL)
+        import warnings as _warnings
+        _warnings.filterwarnings(
+            "ignore",
+            message="[\\s\\S]*add_reader[\\s\\S]*",
+        )
+    except Exception:
+        pass
     if _searxng_app is None:
         try:
             searxng_src = _find_searxng_src()
@@ -1243,12 +1253,24 @@ def searxng_search(query, limit=10):
     if not _searxng_app:
         return []
     try:
-        with _searxng_app.test_client() as client:
-            resp = client.get("/search?q=" + urllib.parse.quote(query)
-                              + "&format=json")
-            if resp.status_code != 200:
-                return []
-            data = json.loads(resp.data)
+        # searx 初始化时会重置 warnings 过滤器，这里重新压上；
+        # 再加 stderr 重定向兜底：searx 引擎的报错只吞进黑洞，不污染搜索答案
+        import io as _io
+        import contextlib as _contextlib
+        try:
+            _warnings.filterwarnings(
+                "ignore",
+                message="[\\s\\S]*add_reader[\\s\\S]*",
+            )
+        except Exception:
+            pass
+        with _contextlib.redirect_stderr(_io.StringIO()):
+            with _searxng_app.test_client() as client:
+                resp = client.get("/search?q=" + urllib.parse.quote(query)
+                                  + "&format=json")
+                if resp.status_code != 200:
+                    return []
+                data = json.loads(resp.data)
     except Exception:
         return []
     results = []
