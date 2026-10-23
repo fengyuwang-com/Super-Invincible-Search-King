@@ -3,10 +3,7 @@
 # 此文件仅供 start_searxng.bat 或手动启动时使用。
 use_default_settings: true
 server:
-  # Must not be the literal 'ultrasecretkey' — SearXNG's webapp.init() calls
-  # sys.exit(1) when it sees the placeholder in non-debug mode, which kills the
-  # in-process test_client import inside scraper.py.
-  secret_key: "king-in-process-only-not-a-public-instance"
+  secret_key: "set-via-SEARXNG_SECRET_KEY-env"
   bind_address: "127.0.0.1"
   port: 8899
   public_instance: false
